@@ -45,35 +45,36 @@ curl 'http://127.0.0.1:8080/v1/projects?limit=20&offset=0' \
 
 ```text
 main.go                     根目录入口，serve/migrate/openapi 命令分发
-app/                        配置、依赖装配、统一路由清单、启动与退出
-httpapi/                    HTTP 基础设施、认证中间件、错误与操作策略
-identity/                   原始令牌校验、JWT/JWKS、认证用户上下文
-apperror/                   业务错误分类和错误链
-pagination/                 分页参数、结果和类型转换
-validation/                 文本基础校验
-modules/
-  project/                  项目业务模型、服务、HTTP、DTO、测试
-  task/                     任务业务模型、服务、HTTP、DTO、测试
-db/
-  pool.go                   数据库连接池
-  migrate.go                独立迁移命令
-  errors.go                 数据库错误识别与映射策略
-  migrations/               全局有序、嵌入二进制的 SQL 迁移
-  queries/                  按业务拆分的 SQL 查询
-  sqlc/                     统一生成的数据库访问代码，不手工修改
-platform/
-  telemetry/                OpenTelemetry 初始化与关闭
-tests/
-  testutil/                 公共 HTTP 与 PostgreSQL 测试夹具
+internal/                   应用实现，限制外部项目导入
+  app/                      配置、依赖装配、统一路由清单、启动与退出
+  httpapi/                  HTTP 公共能力、认证中间件、错误与操作策略
+  identity/                 原始令牌校验、JWT/JWKS、认证用户上下文
+  apperror/                 业务错误分类和错误链
+  pagination/               分页参数、结果和类型转换
+  validation/               文本基础校验
+  modules/
+    project/                项目业务模型、服务、HTTP、DTO、测试
+    task/                   任务业务模型、服务、HTTP、DTO、测试
+  db/
+    pool.go                 数据库连接池
+    migrate.go              独立迁移命令
+    errors.go               数据库错误识别与映射策略
+    migrations/             全局有序、嵌入二进制的 SQL 迁移
+    queries/                按业务拆分的 SQL 查询
+    sqlc/                   统一生成的数据库访问代码，不手工修改
+  platform/
+    telemetry/              OpenTelemetry 初始化与关闭
+  testutil/                 公共 HTTP、PostgreSQL 和 JWT 测试夹具
+tests/                     仓库级测试
   integration/              应用装配、迁移链、健康检查和生命周期测试
   architecture_test.go      静态依赖边界检查
-api/openapi.json             生成的 API 契约，不手工修改
+api/openapi.json            生成的 API 契约，不手工修改
 docs/architecture.md        功能边界与新增模块说明
 ```
 
 HTTP 层负责校验和协议映射；业务规则分别在 `project.Service`、`task.Service`；数据库行转换为业务模型，再由 HTTP 层转换为独立 API DTO。两个模块复用认证中间件，通过构造函数传依赖，不使用全局数据库、依赖注入容器或通用 CRUD repository。示例每次写入只有一个 SQL 语句；新增跨表业务时，在业务操作中明确事务边界，使用 sqlc 生成的 `Queries.WithTx(tx)`，不要在 HTTP 中间件里隐式提交事务。
 
-详细边界见 [架构说明](docs/architecture.md)。移除 `internal` 后，通过架构测试限制反向依赖、业务模块互相引用以及 HTTP/DTO 直接使用数据库生成类型。`app` 统一装配配置和依赖，`identity` 不接收全局配置或 HTTP 请求头。
+详细边界见 [架构说明](docs/architecture.md)。`internal` 由 Go 工具链限制外部项目导入；架构测试继续约束内部反向依赖、业务模块互相引用以及 HTTP/DTO 直接使用数据库生成类型。公共夹具集中在 `internal/testutil`，仅供测试使用。`app` 统一装配配置和依赖，`identity` 不接收全局配置或 HTTP 请求头。
 
 根目录支持 `go run .`、`go run . migrate up`、`go run . openapi`。离线 OpenAPI 复用类型化路由清单，不加载运行配置或初始化数据库、JWKS；运行时构造函数拒绝缺失依赖。直接运行命令需要自行注入环境，`make dev` 则自动读取 `.env`。
 

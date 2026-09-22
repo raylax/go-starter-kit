@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/go-starter-kit/app"
-	"github.com/example/go-starter-kit/db"
+	"github.com/example/go-starter-kit/internal/app"
+	"github.com/example/go-starter-kit/internal/db"
 )
 
 func main() {

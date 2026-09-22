@@ -18,9 +18,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/example/go-starter-kit/app"
-	"github.com/example/go-starter-kit/tests/testutil"
-	"github.com/example/go-starter-kit/tests/testutil/jwtfixture"
+	"github.com/example/go-starter-kit/internal/app"
+	"github.com/example/go-starter-kit/internal/testutil"
+	"github.com/example/go-starter-kit/internal/testutil/jwtfixture"
 )
 
 func TestServerLifecycle(t *testing.T) {

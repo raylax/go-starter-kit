@@ -27,7 +27,7 @@ migrate-down:
 
 generate:
 	go tool sqlc generate
-	gofmt -w -r 'interface{} -> any' db/sqlc
+	gofmt -w -r 'interface{} -> any' internal/db/sqlc
 	@mkdir -p api
 	go run . openapi > api/openapi.json
 

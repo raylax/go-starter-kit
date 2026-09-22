@@ -13,10 +13,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/example/go-starter-kit/app"
-	"github.com/example/go-starter-kit/db"
-	"github.com/example/go-starter-kit/identity"
-	"github.com/example/go-starter-kit/tests/testutil"
+	"github.com/example/go-starter-kit/internal/app"
+	"github.com/example/go-starter-kit/internal/db"
+	"github.com/example/go-starter-kit/internal/identity"
+	"github.com/example/go-starter-kit/internal/testutil"
 )
 
 func TestApplicationAndMigrations(t *testing.T) {

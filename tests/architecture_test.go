@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestDependencyBoundaries 用静态约束补足移除 internal 后的包边界保护。
+// TestDependencyBoundaries 约束 internal 内部依赖方向与测试辅助代码的使用位置。
 func TestDependencyBoundaries(t *testing.T) {
 	root := ".."
 	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
@@ -31,10 +31,6 @@ func TestDependencyBoundaries(t *testing.T) {
 			if path != root && strings.HasPrefix(entry.Name(), ".") {
 				return filepath.SkipDir
 			}
-			if entry.Name() == "internal" {
-				t.Errorf("不应重新引入 internal 目录：%s", path)
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
@@ -45,10 +41,11 @@ func TestDependencyBoundaries(t *testing.T) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "tests/") {
+		if rel != "main.go" && !strings.HasPrefix(rel, "internal/") {
+			t.Errorf("应用实现与测试辅助代码应放入 internal：%s", rel)
 			return nil
 		}
-		source := strings.Split(rel, "/")
+		source := strings.Split(strings.TrimPrefix(rel, "internal/"), "/")
 		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
 		if err != nil {
 			return err
@@ -62,6 +59,11 @@ func TestDependencyBoundaries(t *testing.T) {
 				continue
 			}
 			dependency := strings.TrimPrefix(imported, prefix)
+			if !strings.HasPrefix(dependency, "internal/") {
+				t.Errorf("%s 不应依赖 internal 外的应用包：%s", rel, dependency)
+				continue
+			}
+			dependency = strings.TrimPrefix(dependency, "internal/")
 			allowed := false
 			switch source[0] {
 			case "main.go":
@@ -76,6 +78,9 @@ func TestDependencyBoundaries(t *testing.T) {
 				allowed = dependency == "apperror"
 			case "platform":
 				allowed = strings.HasPrefix(dependency, "platform/")
+			case "testutil":
+				// 公共夹具可以装配 HTTP 和数据库；JWT 子包保持独立。
+				allowed = len(source) == 2 && (dependency == "db" || dependency == "httpapi" || dependency == "identity")
 			case "modules":
 				generated := "db/sqlc"
 				allowed = dependency == generated || dependency == "db" || dependency == "identity" || dependency == "httpapi" || dependency == "apperror" || dependency == "pagination" || dependency == "validation"
