@@ -1,0 +1,21 @@
+# 仓库约定
+
+- 使用 `any` 和 `...any`，禁止旧的空接口写法。`make fmt` 统一格式，`make lint` 检查此约定，包括生成的 Go 代码。
+- 注释和说明文档使用中文；Go 标识符保留英文。生成器标记、工具指令和第三方固定文本按工具要求保留。
+- `main.go` 位于根目录，仅分发 `serve`、`migrate`、`openapi` 命令。不使用 `internal/` 和 `cmd/api/`。
+- `app/` 负责配置、依赖装配、路由清单和生命周期；`httpapi/` 负责 HTTP 公共能力；`identity/` 校验原始令牌，不依赖应用配置或 HTTP 处理器；`db/` 管理数据库连接、迁移与查询；`platform/` 提供遥测基础设施。
+- 业务按 `modules/<业务名>/` 组织。`model.go` 定义业务模型和错误，`service.go` 实现规则与数据访问，`http.go` 处理协议映射，`dto.go` 定义 API 类型；SQL 查询集中在 `db/queries/`，按业务拆分文件；生成代码集中在 `db/sqlc/`。
+- 禁止模块直接依赖其他模块；共享的 `db/sqlc` 仅用于业务的数据访问实现，HTTP 和 DTO 不直接使用生成类型。跨模块组合在应用层显式装配。依赖边界由 `tests/architecture_test.go` 检查。
+- 公共业务错误定义在 `apperror/`，业务模块保留具体错误提示；`httpapi.Endpoint` 在运行时统一调用 `FromError`，模块处理函数直接返回业务错误，禁止重复实现状态映射。普通业务接口使用 `CreatedEndpoint`、`ItemEndpoint`、`PageEndpoint[具名分页 DTO]` 统一响应包装；特殊响应可使用 `MapEndpoint`；无正文接口使用 `NoContentEndpoint`，自定义完整处理函数仍可使用 `Endpoint`。底层原因通过错误链保留，HTTP 只公开业务提示。
+- 数据库错误使用 `db.MapError`，模块声明 `ErrorPolicy`；唯一约束必须按名称匹配，未知约束保持内部异常。
+- 分页规则复用 `pagination.Params`、`Build` 和 `Map`；HTTP 分页字段复用 `httpapi.PageQuery`、`Page` 和 `PageFrom`。模块列表响应使用具名类型提供稳定的 OpenAPI schema 名称。
+- 文本基础校验使用 `validation/`，具体字段上限和状态规则由业务模块决定；认证参数复用 `identity` 校验，开发环境限制在 `app` 中维护。保留各服务入口的所有者检查以及 DTO、服务、数据库的多层校验。
+- 新生成的 UUID 使用 v7：数据库默认值使用 PostgreSQL 18 的 `uuidv7()`，Go 使用 `uuid.NewV7()`；不改写已有记录 ID，历史迁移和回滚脚本保留原生成规则。
+- OpenAPI schema 使用 PascalCase：资源模型为 `<资源>`，请求正文为 `<资源><动作>Request`，列表响应为 `<资源>ListResponse`；公共响应为 `HealthResponse`、`ErrorResponse`，错误明细为 `ErrorDetail`。公开正文使用具名 DTO，不使用匿名正文生成的 `InputBody`、`OutputBody` 或无资源前缀的 `WriteBody`；修改源码后重新生成契约，禁止手改 JSON。
+- API DTO 与业务模型、生成的数据库类型分别维护。所有业务资源的读写 SQL 必须按已认证的 subject 限定作用域。
+- 迁移集中放在 `db/migrations/`，全局有序。修改表结构时新增迁移，不修改已应用到部署数据库的历史迁移。
+- 修改 SQL、迁移或 API 类型后运行 `make generate`。禁止手改 `db/sqlc/` 或 `api/openapi.json`；生成过程包含 `any` 规范化。
+- 路由契约通过 `app/routes.go` 的统一清单装配。离线导出不能初始化数据库、认证客户端或加载运行配置，也不能用空依赖调用运行时构造函数。
+- 代码变更运行 `make check`；数据库、API、认证、迁移或生命周期变更还须运行 `make test-integration`。需要 Docker 的验收不能因基础设施不可用而静默跳过。
+- 业务集成测试随模块放置，应用及生命周期测试放在 `tests/integration/`，公共夹具放在 `tests/testutil/`；JWT 夹具放在无应用依赖的 `tests/testutil/jwtfixture/`，避免认证包测试循环依赖。
+- 不记录或提交凭据、Bearer 令牌和真实用户数据。`.env` 仅供本地使用并已忽略。
