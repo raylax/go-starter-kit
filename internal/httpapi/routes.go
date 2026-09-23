@@ -10,6 +10,24 @@ import (
 type Route[S any] interface {
 	Bind(huma.API, S, ...func(huma.Context, func(huma.Context)))
 	Describe(huma.API)
+	Policy() AuthPolicy
+}
+
+type AuthPolicy string
+
+const (
+	Public  AuthPolicy = "public"
+	Session AuthPolicy = "bearer"
+)
+
+func (e endpoint[S, I, O]) Policy() AuthPolicy {
+	if len(e.operation.Security) == 0 {
+		return Public
+	}
+	for name := range e.operation.Security[0] {
+		return AuthPolicy(name)
+	}
+	return Public
 }
 
 type endpoint[S, I, O any] struct {

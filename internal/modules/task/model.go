@@ -21,7 +21,7 @@ const (
 	Done       Status = "done"
 )
 
-func (s Status) valid() bool { return s == Todo || s == InProgress || s == Done }
+func (s Status) Valid() bool { return s == Todo || s == InProgress || s == Done }
 
 type Record struct {
 	ID          uuid.UUID

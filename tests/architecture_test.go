@@ -41,7 +41,7 @@ func TestDependencyBoundaries(t *testing.T) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if rel != "main.go" && !strings.HasPrefix(rel, "internal/") {
+		if !strings.HasPrefix(rel, "cmd/") && !strings.HasPrefix(rel, "internal/") {
 			t.Errorf("应用实现与测试辅助代码应放入 internal：%s", rel)
 			return nil
 		}
@@ -55,6 +55,9 @@ func TestDependencyBoundaries(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			if (imported == "go.uber.org/fx" || strings.HasPrefix(imported, "go.uber.org/fx/")) && source[0] != "app" {
+				t.Errorf("Fx 只能用于应用装配层：%s", rel)
+			}
 			if !strings.HasPrefix(imported, prefix) {
 				continue
 			}
@@ -66,34 +69,39 @@ func TestDependencyBoundaries(t *testing.T) {
 			dependency = strings.TrimPrefix(dependency, "internal/")
 			allowed := false
 			switch source[0] {
-			case "main.go":
-				allowed = dependency == "app" || dependency == "db"
+			case "cmd":
+				allowed = dependency == "app/"+source[1]
 			case "app":
-				allowed = dependency == "db" || dependency == "httpapi" || dependency == "identity" || strings.HasPrefix(dependency, "platform/") || (strings.HasPrefix(dependency, "modules/") && strings.Count(dependency, "/") == 1)
+				allowed = dependency == "app/appfx" || dependency == "db" || dependency == "httpapi" || dependency == "identity" || dependency == "authorization" || strings.HasPrefix(dependency, "platform/") || (strings.HasPrefix(dependency, "modules/") && strings.Count(dependency, "/") == 1)
 			case "httpapi":
-				allowed = dependency == "identity" || dependency == "apperror" || dependency == "pagination"
-			case "identity", "apperror", "pagination", "validation":
+				allowed = dependency == "identity" || dependency == "authorization" || dependency == "apperror" || dependency == "pagination"
+			case "identity":
+				allowed = dependency == "apperror"
+			case "apperror", "pagination", "validation", "authorization":
 				allowed = false
 			case "db":
 				allowed = dependency == "apperror"
 			case "platform":
 				allowed = strings.HasPrefix(dependency, "platform/")
 			case "testutil":
-				// 公共夹具可以装配 HTTP 和数据库；JWT 子包保持独立。
+				// 公共夹具可以装配 HTTP 和数据库。
 				allowed = len(source) == 2 && (dependency == "db" || dependency == "httpapi" || dependency == "identity")
 			case "modules":
 				generated := "db/sqlc"
-				allowed = dependency == generated || dependency == "db" || dependency == "identity" || dependency == "httpapi" || dependency == "apperror" || dependency == "pagination" || dependency == "validation"
+				allowed = dependency == generated || dependency == "db" || dependency == "identity" || dependency == "authorization" || dependency == "httpapi" || dependency == "apperror" || dependency == "pagination" || dependency == "validation"
 				if entry.Name() == "model.go" {
-					allowed = dependency == "apperror"
+					allowed = dependency == "apperror" || dependency == "authorization"
 				}
-				if entry.Name() == "dto.go" {
+				if entry.Name() == "dto.go" || strings.HasSuffix(entry.Name(), "_dto.go") {
 					allowed = dependency == "httpapi"
 				}
-				if entry.Name() == "service.go" {
-					allowed = dependency == generated || dependency == "db" || dependency == "apperror" || dependency == "pagination" || dependency == "validation"
+				if source[1] == "account" && entry.Name() != "http.go" && !strings.HasSuffix(entry.Name(), "_http.go") && entry.Name() != "dto.go" && !strings.HasSuffix(entry.Name(), "_dto.go") && entry.Name() != "model.go" {
+					allowed = dependency == generated || dependency == "db" || dependency == "identity" || dependency == "authorization" || dependency == "apperror" || dependency == "pagination" || dependency == "validation"
 				}
-				if entry.Name() == "http.go" && (dependency == generated || dependency == "db") {
+				if entry.Name() == "service.go" {
+					allowed = dependency == generated || dependency == "db" || dependency == "identity" || dependency == "authorization" || dependency == "apperror" || dependency == "pagination" || dependency == "validation"
+				}
+				if (entry.Name() == "http.go" || strings.HasSuffix(entry.Name(), "_http.go")) && (dependency == generated || dependency == "db") {
 					allowed = false
 				}
 			}

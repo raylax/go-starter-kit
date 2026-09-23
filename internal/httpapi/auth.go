@@ -15,10 +15,10 @@ import (
 func Middleware(api huma.API, authenticator identity.Authenticator) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		raw, ok := bearer(ctx.Header("Authorization"))
-		var subject string
+		var principal identity.Principal
 		err := identity.ErrUnauthorized
 		if ok {
-			subject, err = authenticator.Authenticate(ctx.Context(), raw)
+			principal, err = authenticator.Authenticate(ctx.Context(), raw)
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Context().Err(), context.DeadlineExceeded) {
 			_ = huma.WriteErr(api, ctx, http.StatusGatewayTimeout, "authentication deadline exceeded")
@@ -28,13 +28,13 @@ func Middleware(api huma.API, authenticator identity.Authenticator) func(huma.Co
 			_ = huma.WriteErr(api, ctx, http.StatusServiceUnavailable, "authentication service unavailable")
 			return
 		}
-		if err != nil || subject == "" {
+		if err != nil || principal.Subject == "" {
 			ctx.SetHeader("WWW-Authenticate", "Bearer")
-			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, "valid bearer token required")
+			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, "session_invalid")
 			return
 		}
 		ctx.SetHeader("Cache-Control", "no-store")
-		next(huma.WithContext(ctx, identity.WithSubject(ctx.Context(), subject)))
+		next(huma.WithContext(ctx, identity.WithPrincipal(ctx.Context(), principal)))
 	}
 }
 

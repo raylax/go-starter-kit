@@ -11,6 +11,17 @@ import (
 	"github.com/example/go-starter-kit/internal/apperror"
 )
 
+// sanitizeErrors 避免校验器把密码、令牌或原始请求正文带入错误响应。
+// 字段路径和解析消息也可能包含用户输入，因此仅保留通用校验提示。
+func sanitizeErrors(_ huma.Context, _ string, value any) (any, error) {
+	if model, ok := value.(*huma.ErrorModel); ok && len(model.Errors) > 0 {
+		copy := *model
+		copy.Errors = []*huma.ErrorDetail{{Message: "request validation failed"}}
+		return &copy, nil
+	}
+	return value, nil
+}
+
 func Problem(w http.ResponseWriter, status int, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
@@ -41,7 +52,11 @@ func FromError(ctx context.Context, err error) error {
 		case apperror.Invalid:
 			return huma.Error422UnprocessableEntity(business.Error())
 		case apperror.Unauthenticated:
-			return huma.Error401Unauthorized("valid bearer token required")
+			return huma.Error401Unauthorized(business.Error())
+		case apperror.Forbidden:
+			return huma.Error403Forbidden(business.Error())
+		case apperror.RateLimited:
+			return huma.ErrorWithHeaders(huma.Error429TooManyRequests(business.Error()), http.Header{"Retry-After": []string{"900"}})
 		case apperror.Unavailable:
 			Logger(ctx).ErrorContext(ctx, "dependency unavailable", "error", err)
 			return huma.Error503ServiceUnavailable(business.Error())

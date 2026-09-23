@@ -19,10 +19,10 @@ type tokenAuthenticator struct {
 	token string
 }
 
-func (a *tokenAuthenticator) Authenticate(_ context.Context, token string) (string, error) {
+func (a *tokenAuthenticator) Authenticate(_ context.Context, token string) (identity.Principal, error) {
 	a.calls++
 	a.token = token
-	return "alice", nil
+	return identity.Principal{Subject: "alice", SessionID: "session-test"}, nil
 }
 
 func TestBearerTransport(t *testing.T) {

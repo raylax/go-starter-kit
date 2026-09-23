@@ -13,20 +13,16 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/example/go-starter-kit/internal/app"
+	app "github.com/example/go-starter-kit/internal/app/api"
 	"github.com/example/go-starter-kit/internal/db"
-	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/testutil"
 )
 
 func TestApplicationAndMigrations(t *testing.T) {
 	ctx := t.Context()
 	pool, databaseURL := testutil.Database(t)
-	authenticator, err := identity.NewDevelopment("integration-only-token", "alice")
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler, _, err := app.NewHandler(app.Config{RequestTimeout: 5 * time.Second, DocsEnabled: true}, slog.New(slog.NewJSONHandler(io.Discard, nil)), app.NewDependencies(pool, authenticator, pool.Ping))
+	authenticator := testutil.Authenticator{Subject: "alice"}
+	handler, _, err := app.NewHandler(app.Config{RequestTimeout: 5 * time.Second, DocsEnabled: true}, slog.New(slog.NewJSONHandler(io.Discard, nil)), app.NewDependencies(pool, authenticator, accountService(t, pool), pool.Ping))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,82 +47,55 @@ func TestApplicationAndMigrations(t *testing.T) {
 			t.Fatal(fmt.Sprintf("missing contract: %s %s", endpoint.method, endpoint.path))
 		}
 	}
-	// 验证 UUID 迁移的升降级以及两种版本的数据共存。
-	createWithDefault := func(version uuid.Version, label string) map[string]uuid.UUID {
+	// 基线一次创建全部业务表，重复执行 up 不应修改已有记录。
+	createWithDefault := func(label string) {
 		t.Helper()
-		ids := make(map[string]uuid.UUID)
 		for _, resource := range []struct{ table, field string }{{"projects", "name"}, {"tasks", "title"}} {
 			var id uuid.UUID
 			query := fmt.Sprintf("INSERT INTO %s (owner_id, %s) VALUES ('alice', $1) RETURNING id", resource.table, resource.field)
 			if err := pool.QueryRow(ctx, query, label).Scan(&id); err != nil {
 				t.Fatal(err)
 			}
-			if id.Version() != version {
-				t.Fatalf("%s 默认 ID 版本错误：期望 %d，实际 %d", resource.table, version, id.Version())
-			}
-			ids[resource.table] = id
-		}
-		return ids
-	}
-	currentIDs := createWithDefault(7, "升级后的记录")
-	if err := db.Migrate(ctx, databaseURL, "down"); err != nil {
-		t.Fatal(err)
-	}
-	legacyIDs := createWithDefault(4, "旧版本生成的记录")
-	if err := db.Migrate(ctx, databaseURL, "up"); err != nil {
-		t.Fatal(err)
-	}
-	createWithDefault(7, "重新升级后的记录")
-	for _, ids := range []map[string]uuid.UUID{currentIDs, legacyIDs} {
-		for table, id := range ids {
-			data := request(alice, "GET", "/v1/"+table+"/"+id.String(), "", true, 200)
-			var item struct{ ID uuid.UUID }
-			if err := json.Unmarshal(data, &item); err != nil || item.ID != id {
-				t.Fatal("迁移改写了已有 ID 或旧记录无法读取")
+			if id.Version() != 7 {
+				t.Fatalf("%s 默认 ID 不是 UUID v7", resource.table)
 			}
 		}
 	}
-	// 先撤销 UUID 默认值迁移，再验证任务表的独立回滚。
-	if err := db.Migrate(ctx, databaseURL, "down"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrate(ctx, databaseURL, "down"); err != nil {
-		t.Fatal(err)
-	}
-	var table *string
-	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.tasks')::text").Scan(&table); err != nil {
-		t.Fatal(err)
-	}
-	if table != nil {
-		t.Fatal("task down migration did not remove table")
-	}
-	var projectCount int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM projects").Scan(&projectCount); err != nil {
-		t.Fatal(err)
-	}
-	if projectCount == 0 {
-		t.Fatal("task rollback lost existing project data")
-	}
-	if err := db.Migrate(ctx, databaseURL, "up"); err != nil {
-		t.Fatal(err)
-	}
-	request(alice, "GET", "/v1/tasks", "", true, 200)
-	// 回滚三个迁移，再从空数据库重建完整表结构。
-	for range 3 {
-		if err := db.Migrate(ctx, databaseURL, "down"); err != nil {
-			t.Fatal(err)
+	tables := []string{"projects", "tasks", "users", "accounts", "user_sessions", "auth_flows", "auth_verifications", "audit_events", "auth_rate_limits", "mail_outbox"}
+	assertTables := func(present bool) {
+		t.Helper()
+		for _, name := range tables {
+			var table *string
+			if err := pool.QueryRow(ctx, "SELECT to_regclass($1)::text", "public."+name).Scan(&table); err != nil {
+				t.Fatal(err)
+			}
+			if (table != nil) != present {
+				t.Fatalf("表 %s 状态不符", name)
+			}
 		}
 	}
-	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.projects')::text").Scan(&table); err != nil {
-		t.Fatal(err)
-	}
-	if table != nil {
-		t.Fatal("down migration did not remove table")
-	}
+	assertTables(true)
+	createWithDefault("初始化记录")
 	if err := db.Migrate(ctx, databaseURL, "up"); err != nil {
 		t.Fatal(err)
 	}
-	createWithDefault(7, "重建后的记录")
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM projects").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("重复迁移改变了记录: %d %v", count, err)
+	}
+	var version int64
+	if err := pool.QueryRow(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 1 {
+		t.Fatalf("基线版本错误: %d %v", version, err)
+	}
+	if err := db.Migrate(ctx, databaseURL, "down"); err != nil {
+		t.Fatal(err)
+	}
+	assertTables(false)
+	if err := db.Migrate(ctx, databaseURL, "up"); err != nil {
+		t.Fatal(err)
+	}
+	assertTables(true)
+	createWithDefault("重建后的记录")
 	request(alice, "GET", "/v1/projects", "", true, 200)
 	request(alice, "GET", "/v1/tasks", "", true, 200)
 	pool.Close()

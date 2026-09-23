@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,30 @@ import (
 	"github.com/example/go-starter-kit/internal/apperror"
 )
 
+func TestValidationDoesNotEchoCredentials(t *testing.T) {
+	handler, api := New(Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	huma.Register(api, huma.Operation{OperationID: "sensitive", Method: http.MethodPost, Path: "/sensitive"}, func(context.Context, *struct {
+		Body struct {
+			Password string `json:"password" maxLength:"4"`
+		}
+	}) (*struct{}, error) {
+		return &struct{}{}, nil
+	})
+	for _, body := range []string{
+		`{"password":"private-credential"}`,
+		`{"password":"private-credential",`,
+		`{"private-credential":true}`,
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/sensitive", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code < 400 || strings.Contains(w.Body.String(), "private-credential") || strings.Contains(w.Body.String(), `"value"`) {
+			t.Fatal("校验响应泄露请求内容或未拒绝无效请求")
+		}
+	}
+}
+
 func TestErrorMapping(t *testing.T) {
 	secret := errors.New("private SQL host and constraint details")
 	for _, tc := range []struct {
@@ -29,7 +54,7 @@ func TestErrorMapping(t *testing.T) {
 		{"不存在", apperror.Wrap(apperror.New(apperror.NotFound, "project not found"), secret), 404, "project not found"},
 		{"冲突", apperror.Wrap(apperror.New(apperror.Conflict, "name exists"), secret), 409, "name exists"},
 		{"输入无效", apperror.New(apperror.Invalid, "invalid project input"), 422, "invalid project input"},
-		{"未认证", apperror.ErrUnauthenticated, 401, "valid bearer token required"},
+		{"未认证", apperror.ErrUnauthenticated, 401, "authenticated subject required"},
 		{"依赖故障", apperror.Wrap(apperror.New(apperror.Unavailable, "service unavailable"), secret), 503, "service unavailable"},
 		{"超时", fmt.Errorf("query: %w", context.DeadlineExceeded), 504, "request deadline exceeded"},
 		{"未知错误", secret, 500, "internal server error"},

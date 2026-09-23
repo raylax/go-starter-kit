@@ -1,25 +1,23 @@
 package identity
 
 import (
-	"errors"
 	"strings"
 	"testing"
 )
 
-func TestCredentialValidation(t *testing.T) {
-	token := strings.Repeat("x", 16)
+func TestSubjectValidation(t *testing.T) {
 	for _, tc := range []struct {
-		token, subject string
-		want           error
+		subject string
+		valid   bool
 	}{
-		{token, "alice", nil}, {token, strings.Repeat("中", 85), nil}, {token, strings.Repeat("中", 86), ErrInvalidSubject},
-		{token, " \t\n", ErrInvalidSubject}, {token, "", ErrInvalidSubject}, {token[:15], "alice", ErrInvalidDevelopmentToken},
-		{token + " ", "alice", ErrInvalidDevelopmentToken}, {token + "\t", "alice", ErrInvalidDevelopmentToken},
+		{"alice", true}, {strings.Repeat("中", 85), true}, {strings.Repeat("中", 86), false},
+		{" \t\n", false}, {"", false}, {"a\x00", false}, {string([]byte{255}), false},
 	} {
-		err := ValidateDevelopment(tc.token, tc.subject)
-		_, constructorErr := NewDevelopment(tc.token, tc.subject)
-		if !errors.Is(err, tc.want) || !errors.Is(constructorErr, tc.want) {
-			t.Fatalf("构造与校验规则不一致：%v / %v", err, constructorErr)
+		if (ValidateSubject(tc.subject) == nil) != tc.valid {
+			t.Fatal("主体格式校验错误")
+		}
+		if (RequireSubject(tc.subject) == nil) != tc.valid {
+			t.Fatal("服务入口校验错误")
 		}
 	}
 }

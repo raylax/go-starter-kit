@@ -8,7 +8,7 @@ import (
 
 // TextWithin 按字符数检查文本，允许空字符串，保留原始空白。
 func TextWithin(value string, maxRunes int) bool {
-	return maxRunes >= 0 && utf8.RuneCountInString(value) <= maxRunes && !strings.ContainsRune(value, '\x00')
+	return utf8.ValidString(value) && maxRunes >= 0 && utf8.RuneCountInString(value) <= maxRunes && !strings.ContainsRune(value, '\x00')
 }
 
 // RequiredText 去除首尾空白，再检查非空、长度和 NUL。

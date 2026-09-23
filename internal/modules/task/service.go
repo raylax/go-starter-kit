@@ -5,22 +5,19 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
+	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
-	"github.com/example/go-starter-kit/internal/validation"
 )
-
-var storageErrors = db.ErrorPolicy{Resource: "task", NotFound: ErrNotFound}
 
 type Service struct{ queries *sqlc.Queries }
 
 func NewService(db sqlc.DBTX) *Service { return &Service{queries: sqlc.New(db)} }
 
 func (s *Service) Create(ctx context.Context, owner string, input Details) (Record, error) {
-	if owner == "" {
-		return Record{}, apperror.ErrUnauthenticated
+	if err := identity.RequireSubject(owner); err != nil {
+		return Record{}, err
 	}
 	if input.Status == "" {
 		input.Status = Todo
@@ -34,18 +31,18 @@ func (s *Service) Create(ctx context.Context, owner string, input Details) (Reco
 }
 
 func (s *Service) Get(ctx context.Context, owner string, id uuid.UUID) (Record, error) {
-	if owner == "" {
-		return Record{}, apperror.ErrUnauthenticated
+	if err := identity.RequireSubject(owner); err != nil {
+		return Record{}, err
 	}
 	row, err := s.queries.GetTask(ctx, sqlc.GetTaskParams{ID: id, OwnerID: owner})
 	return fromRow(row), db.MapError(err, storageErrors)
 }
 
 func (s *Service) List(ctx context.Context, owner string, status Status, params pagination.Params) (pagination.Result[Record], error) {
-	if owner == "" {
-		return pagination.Result[Record]{}, apperror.ErrUnauthenticated
+	if err := identity.RequireSubject(owner); err != nil {
+		return pagination.Result[Record]{}, err
 	}
-	if (status != "" && !status.valid()) || params.Validate() != nil {
+	if (status != "" && !status.Valid()) || params.Validate() != nil {
 		return pagination.Result[Record]{}, ErrInvalid
 	}
 	rows, err := s.queries.ListTasks(ctx, sqlc.ListTasksParams{OwnerID: owner, StatusFilter: string(status), PageLimit: params.FetchLimit(), PageOffset: params.Offset})
@@ -56,8 +53,8 @@ func (s *Service) List(ctx context.Context, owner string, status Status, params 
 }
 
 func (s *Service) Update(ctx context.Context, owner string, id uuid.UUID, input Details) (Record, error) {
-	if owner == "" {
-		return Record{}, apperror.ErrUnauthenticated
+	if err := identity.RequireSubject(owner); err != nil {
+		return Record{}, err
 	}
 	input, err := validate(input)
 	if err != nil {
@@ -68,8 +65,8 @@ func (s *Service) Update(ctx context.Context, owner string, id uuid.UUID, input 
 }
 
 func (s *Service) Delete(ctx context.Context, owner string, id uuid.UUID) error {
-	if owner == "" {
-		return apperror.ErrUnauthenticated
+	if err := identity.RequireSubject(owner); err != nil {
+		return err
 	}
 	count, err := s.queries.DeleteTask(ctx, sqlc.DeleteTaskParams{ID: id, OwnerID: owner})
 	if err != nil {
@@ -79,17 +76,4 @@ func (s *Service) Delete(ctx context.Context, owner string, id uuid.UUID) error 
 		return ErrNotFound
 	}
 	return nil
-}
-
-func validate(input Details) (Details, error) {
-	title, valid := validation.RequiredText(input.Title, 200)
-	if !valid || !validation.TextWithin(input.Description, 2000) || !input.Status.valid() {
-		return Details{}, ErrInvalid
-	}
-	input.Title = title
-	return input, nil
-}
-
-func fromRow(row sqlc.Task) Record {
-	return Record{ID: row.ID, Title: row.Title, Description: row.Description, Status: Status(row.Status), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }

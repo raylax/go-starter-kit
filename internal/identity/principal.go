@@ -1,4 +1,4 @@
-// Package identity 校验访问令牌并传递已认证的用户标识。
+// Package identity 校验令牌格式并传递已认证身份，不访问数据库或 HTTP。
 package identity
 
 import (
@@ -11,16 +11,24 @@ var ErrUnavailable = errors.New("authentication service unavailable")
 
 // Authenticator 接收原始令牌，不解析 HTTP 请求头。
 type Authenticator interface {
-	Authenticate(context.Context, string) (string, error)
+	Authenticate(context.Context, string) (Principal, error)
 }
 
-type subjectKey struct{}
+type Principal struct {
+	Subject   string
+	SessionID string
+}
+type principalKey struct{}
+
+func WithPrincipal(ctx context.Context, principal Principal) context.Context {
+	return context.WithValue(ctx, principalKey{}, principal)
+}
+func Current(ctx context.Context) Principal { p, _ := ctx.Value(principalKey{}).(Principal); return p }
 
 func WithSubject(ctx context.Context, subject string) context.Context {
-	return context.WithValue(ctx, subjectKey{}, subject)
+	return WithPrincipal(ctx, Principal{Subject: subject})
 }
 
 func Subject(ctx context.Context) string {
-	subject, _ := ctx.Value(subjectKey{}).(string)
-	return subject
+	return Current(ctx).Subject
 }

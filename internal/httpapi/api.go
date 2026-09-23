@@ -16,12 +16,14 @@ import (
 type Config struct {
 	RequestTimeout time.Duration
 	DocsEnabled    bool
+	AllowedOrigins []string
 }
 
 // New 创建基础路由器，具体业务路由由应用装配层注册。
 func New(cfg Config, logger *slog.Logger) (http.Handler, huma.API) {
 	router := chi.NewRouter()
 	router.Use(Requests(logger, cfg.RequestTimeout))
+	router.Use(CORS(cfg.AllowedOrigins))
 	router.NotFound(func(w http.ResponseWriter, _ *http.Request) { Problem(w, http.StatusNotFound, "route not found") })
 	router.MethodNotAllowed(MethodNotAllowed(router))
 	apiConfig := huma.DefaultConfig("Go Starter Kit API", "1.0.0")
@@ -33,6 +35,7 @@ func New(cfg Config, logger *slog.Logger) (http.Handler, huma.API) {
 		return huma.DefaultSchemaNamer(t, hint)
 	})
 	apiConfig.RejectUnknownQueryParameters = true
+	apiConfig.Transformers = append(apiConfig.Transformers, sanitizeErrors)
 	// 响应结构不依赖文档地址，同时禁用自动添加的 $schema 字段。
 	apiConfig.CreateHooks = nil
 	apiConfig.SchemasPath = ""
@@ -40,7 +43,7 @@ func New(cfg Config, logger *slog.Logger) (http.Handler, huma.API) {
 		apiConfig.OpenAPIPath, apiConfig.DocsPath = "", ""
 	}
 	apiConfig.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
-		"bearer": {Type: "http", Scheme: "bearer", Description: "JWT access token for this API; explicit demo token in development mode."},
+		"bearer": {Type: "http", Scheme: "bearer", Description: "以 tk_ 开头的用户会话令牌。"},
 	}
 	api := humachi.New(router, apiConfig)
 	return otelhttp.NewHandler(router, "http.server"), api

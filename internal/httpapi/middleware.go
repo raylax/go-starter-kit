@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -16,6 +17,13 @@ import (
 )
 
 type loggerKey struct{}
+type requestMetaKey struct{}
+type RequestMeta struct{ ID, ClientIP string }
+
+func Metadata(ctx context.Context) RequestMeta {
+	m, _ := ctx.Value(requestMetaKey{}).(RequestMeta)
+	return m
+}
 
 func Logger(ctx context.Context) *slog.Logger {
 	if logger, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
@@ -38,6 +46,8 @@ func Requests(logger *slog.Logger, timeout time.Duration) func(http.Handler) htt
 				log = log.With("trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
 			}
 			ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), loggerKey{}, log), timeout)
+			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+			ctx = context.WithValue(ctx, requestMetaKey{}, RequestMeta{ID: requestID, ClientIP: ip})
 			defer cancel()
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 			defer func() {

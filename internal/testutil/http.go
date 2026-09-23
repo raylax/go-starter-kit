@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,10 +19,7 @@ import (
 // ModuleServer 只装配待测模块，避免模块测试依赖整个应用。
 func ModuleServer[S any](t *testing.T, subject string, timeout time.Duration, service S, routes []httpapi.Route[S]) *httptest.Server {
 	t.Helper()
-	authenticator, err := identity.NewDevelopment("integration-only-token", subject)
-	if err != nil {
-		t.Fatal(err)
-	}
+	authenticator := Authenticator{Subject: subject}
 	handler, api := httpapi.New(httpapi.Config{RequestTimeout: timeout}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, route := range routes {
 		route.Bind(api, service, httpapi.Middleware(api, authenticator))
@@ -66,4 +64,17 @@ func Request(t *testing.T) func(*httptest.Server, string, string, string, bool, 
 		}
 		return data
 	}
+}
+
+// Authenticator 是仅用于测试的固定身份夹具，不提供应用配置入口。
+type Authenticator struct{ Subject string }
+
+func (a Authenticator) Authenticate(ctx context.Context, raw string) (identity.Principal, error) {
+	if err := ctx.Err(); err != nil {
+		return identity.Principal{}, err
+	}
+	if raw != "integration-only-token" || identity.ValidateSubject(a.Subject) != nil {
+		return identity.Principal{}, identity.ErrUnauthorized
+	}
+	return identity.Principal{Subject: a.Subject}, nil
 }

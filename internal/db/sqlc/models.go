@@ -10,6 +10,77 @@ import (
 	"github.com/google/uuid"
 )
 
+type Account struct {
+	ID                uuid.UUID
+	UserID            uuid.UUID
+	ProviderID        string
+	ProviderAccountID string
+	ProviderNamespace string
+	PasswordHash      *string
+	Version           int64
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	LastUsedAt        *time.Time
+	RevokedAt         *time.Time
+}
+
+type AuthFlow struct {
+	ID                 uuid.UUID
+	Purpose            string
+	TokenHash          []byte
+	ProviderID         string
+	ConfigVersion      string
+	UserID             *uuid.UUID
+	SessionID          *uuid.UUID
+	AuthVersion        int64
+	AccountID          *uuid.UUID
+	AccountVersion     int64
+	Operation          string
+	Target             string
+	ReauthenticationID *uuid.UUID
+	ClaimedBy          *uuid.UUID
+	StateHash          []byte
+	ProtocolState      []byte
+	VerifiedNamespace  string
+	VerifiedSubject    string
+	VerifiedName       string
+	AuthenticatedAt    *time.Time
+	Status             string
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+}
+
+type AuthVerification struct {
+	ID                 uuid.UUID
+	UserID             uuid.UUID
+	Purpose            string
+	TokenHash          []byte
+	Email              string
+	AuthVersion        int64
+	SessionID          *uuid.UUID
+	ReauthenticationID *uuid.UUID
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+	ConsumedAt         *time.Time
+}
+
+type MailOutbox struct {
+	ID          uuid.UUID
+	Kind        string
+	Recipient   string
+	Subject     string
+	Body        string
+	Status      string
+	Attempts    int32
+	AvailableAt time.Time
+	ExpiresAt   time.Time
+	LeaseID     *uuid.UUID
+	LeasedUntil *time.Time
+	LastError   *string
+	CreatedAt   time.Time
+	CompletedAt *time.Time
+}
+
 type Project struct {
 	ID          uuid.UUID
 	OwnerID     string
@@ -27,4 +98,33 @@ type Task struct {
 	Status      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type User struct {
+	ID              uuid.UUID
+	DisplayName     string
+	Email           *string
+	EmailNormalized *string
+	EmailVerifiedAt *time.Time
+	RecoveryEnabled bool
+	Status          string
+	Role            string
+	AuthVersion     int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type UserSession struct {
+	ID                uuid.UUID
+	UserID            uuid.UUID
+	TokenHash         []byte
+	AuthMethod        string
+	AuthSourceID      uuid.UUID
+	AuthenticatedAt   time.Time
+	AuthVersion       int64
+	CreatedAt         time.Time
+	LastSeenAt        time.Time
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
+	RevokedAt         *time.Time
 }

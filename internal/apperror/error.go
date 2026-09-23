@@ -11,6 +11,8 @@ const (
 	Invalid
 	Unauthenticated
 	Unavailable
+	Forbidden
+	RateLimited
 )
 
 // Error 只保存可以向调用方公开的分类和提示，字段创建后不可修改。
