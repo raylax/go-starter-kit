@@ -77,9 +77,9 @@ func (s *Service) Login(ctx context.Context, r Request, email, password string) 
 	if ue != nil || ae != nil || !valid || UserStatus(u.Status) != UserActive || u.EmailVerifiedAt == nil {
 		return SessionCredentials{}, ErrCredentials
 	}
-	var newHash string
+	var newPasswordHash string
 	if upgrade {
-		newHash, e = s.deps.Passwords.Hash(ctx, password)
+		newPasswordHash, e = s.deps.Passwords.Hash(ctx, password)
 		if e != nil {
 			return SessionCredentials{}, e
 		}
@@ -98,8 +98,8 @@ func (s *Service) Login(ctx context.Context, r Request, email, password string) 
 		if current.AuthVersion != u.AuthVersion || fresh.Version != a.Version || UserStatus(current.Status) != UserActive {
 			return ErrCredentials
 		}
-		if newHash != "" {
-			if e = q.UpgradePasswordHash(ctx, sqlc.UpgradePasswordHashParams{ID: a.ID, UserID: u.ID, PasswordHash: &newHash, PasswordHash_2: a.PasswordHash}); e != nil {
+		if newPasswordHash != "" {
+			if e = q.UpgradePasswordHash(ctx, sqlc.UpgradePasswordHashParams{ID: a.ID, UserID: u.ID, NewPasswordHash: &newPasswordHash, OldPasswordHash: a.PasswordHash}); e != nil {
 				return e
 			}
 		}

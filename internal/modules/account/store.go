@@ -114,7 +114,7 @@ func (q *store) ChangePassword(ctx context.Context, p sqlc.ChangePasswordParams)
 }
 
 func (q *store) UpgradePasswordHash(ctx context.Context, p sqlc.UpgradePasswordHashParams) error {
-	if p.PasswordHash == nil || *p.PasswordHash == "" {
+	if p.NewPasswordHash == nil || *p.NewPasswordHash == "" {
 		return ErrInvalid
 	}
 	a, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: p.ID, UserID: p.UserID})

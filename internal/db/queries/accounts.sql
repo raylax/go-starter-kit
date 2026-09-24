@@ -19,8 +19,8 @@ UPDATE accounts SET password_hash = $3, version = version + 1, updated_at = now(
 WHERE id = $1 AND user_id = $2 AND provider_id = 'credential' AND revoked_at IS NULL;
 
 -- name: UpgradePasswordHash :exec
-UPDATE accounts SET password_hash = $3, updated_at = now()
-WHERE id = $1 AND user_id = $2 AND password_hash = $4 AND revoked_at IS NULL;
+UPDATE accounts SET password_hash = sqlc.narg(new_password_hash), updated_at = now()
+WHERE id = $1 AND user_id = $2 AND password_hash = sqlc.narg(old_password_hash) AND revoked_at IS NULL;
 
 -- name: RevokeAccount :execrows
 UPDATE accounts SET revoked_at = now(), version = version + 1, updated_at = now()

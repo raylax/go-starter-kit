@@ -223,18 +223,18 @@ WHERE id = $1 AND user_id = $2 AND password_hash = $4 AND revoked_at IS NULL
 `
 
 type UpgradePasswordHashParams struct {
-	ID             uuid.UUID
-	UserID         uuid.UUID
-	PasswordHash   *string
-	PasswordHash_2 *string
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	NewPasswordHash *string
+	OldPasswordHash *string
 }
 
 func (q *Queries) UpgradePasswordHash(ctx context.Context, arg UpgradePasswordHashParams) error {
 	_, err := q.db.Exec(ctx, upgradePasswordHash,
 		arg.ID,
 		arg.UserID,
-		arg.PasswordHash,
-		arg.PasswordHash_2,
+		arg.NewPasswordHash,
+		arg.OldPasswordHash,
 	)
 	return err
 }
