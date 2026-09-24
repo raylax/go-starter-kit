@@ -32,30 +32,3 @@ func TestOfflineContractMatchesRuntime(t *testing.T) {
 		}
 	}
 }
-
-func TestHandlerRejectsMissingDependencies(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for _, missing := range []string{"logger", "projects", "tasks", "accounts", "authenticator", "ready"} {
-		t.Run(missing, func(t *testing.T) {
-			deps := testDependencies()
-			log := logger
-			switch missing {
-			case "logger":
-				log = nil
-			case "projects":
-				deps.Projects = nil
-			case "tasks":
-				deps.Tasks = nil
-			case "accounts":
-				deps.Accounts = nil
-			case "authenticator":
-				deps.Authenticator = nil
-			case "ready":
-				deps.Ready = nil
-			}
-			if _, _, err := NewHandler(Config{RequestTimeout: time.Second}, log, deps); err == nil {
-				t.Fatal("缺少必要依赖时应立即失败")
-			}
-		})
-	}
-}

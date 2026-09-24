@@ -1,201 +1,21 @@
 //go:build integration
 
-package account
+package account_test
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"github.com/example/go-starter-kit/internal/authorization"
-	"html"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/example/go-starter-kit/internal/httpapi"
+	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/example/go-starter-kit/internal/identity"
-	"github.com/example/go-starter-kit/internal/platform/password"
-	"github.com/example/go-starter-kit/internal/testutil"
+	"github.com/example/go-starter-kit/internal/modules/account"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-const testPassword = "a secure test password phrase"
-
-type sessionAdapter struct{ s *Service }
-
-func (a sessionAdapter) Authenticate(ctx context.Context, raw string) (identity.Principal, error) {
-	u, s, e := a.s.AuthenticateSession(ctx, raw)
-	return identity.Principal{Subject: u, SessionID: s}, e
-}
-
-type accountFixture struct {
-	t      *testing.T
-	s      *Service
-	pool   *pgxpool.Pool
-	server *httptest.Server
-}
-
-func newFixture(t *testing.T) *accountFixture {
-	pool, _ := testutil.Database(t)
-	h, e := password.New(4)
-	if e != nil {
-		t.Fatal(e)
-	}
-	f := &accountFixture{t: t, pool: pool}
-	deps := Dependencies{Authorizer: authorization.AdminCheckFunc(NewAdminChecker(pool).CheckAdmin), Hash: h.Hash, Verify: h.Verify, ValidPassword: password.Validate,
-		ProviderEnabled: func(id string) bool { return id == "demo" || id == "second" }, ProviderVersion: func(string) string { return "v1" },
-		StartProvider: func(_ context.Context, id, state, verifier string) (string, string, error) {
-			if verifier == "" {
-				t.Error("缺少 PKCE")
-			}
-			return "https://provider.example/authorize?state=" + state, "v1", nil
-		},
-		VerifyProvider: func(_ context.Context, id, version, code, verifier string) (VerifiedIdentity, error) {
-			if code == "invalid" {
-				return VerifiedIdentity{}, ErrCredentials
-			}
-			return VerifiedIdentity{Namespace: "https://" + id + ".example", Subject: code, Name: "external user", AuthenticatedAt: time.Now()}, nil
-		},
-	}
-	f.s, e = NewService(pool, Options{IdleTTL: 30 * time.Minute, MaxTTL: 24 * time.Hour, FrontendURL: "https://web.example"}, deps)
-	if e != nil {
-		t.Fatal(e)
-	}
-	handler, api := httpapi.New(httpapi.Config{RequestTimeout: 10 * time.Second, AllowedOrigins: []string{"https://web.example"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	for _, route := range append(Routes(), AdminRoutes()...) {
-		switch route.Policy() {
-		case httpapi.Session:
-			route.Bind(api, f.s, httpapi.Middleware(api, sessionAdapter{f.s}))
-		default:
-			route.Bind(api, f.s)
-		}
-	}
-	f.server = httptest.NewServer(handler)
-	t.Cleanup(f.server.Close)
-	return f
-}
-func (f *accountFixture) call(method, path, token string, body any, want int) []byte {
-	f.t.Helper()
-	var data []byte
-	if body != nil {
-		var e error
-		data, e = json.Marshal(body)
-		if e != nil {
-			f.t.Fatal(e)
-		}
-	}
-	req, e := http.NewRequestWithContext(f.t.Context(), method, f.server.URL+path, bytes.NewReader(data))
-	if e != nil {
-		f.t.Fatal(e)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	res, e := f.server.Client().Do(req)
-	if e != nil {
-		f.t.Fatal(e)
-	}
-	defer res.Body.Close()
-	out, e := io.ReadAll(res.Body)
-	if e != nil {
-		f.t.Fatal(e)
-	}
-	if res.StatusCode != want {
-		f.t.Fatalf("%s %s status=%d want=%d error=%s", method, path, res.StatusCode, want, safeError(out))
-	}
-	if res.Header.Get("Set-Cookie") != "" {
-		f.t.Fatal("应用不应设置 Cookie")
-	}
-	if want == 429 && res.Header.Get("Retry-After") == "" {
-		f.t.Fatal("缺少重试期限")
-	}
-	return out
-}
-func safeError(raw []byte) string {
-	var err struct {
-		Detail string `json:"detail"`
-	}
-	_ = json.Unmarshal(raw, &err)
-	return err.Detail
-}
-func decode[T any](t *testing.T, data []byte) T {
-	t.Helper()
-	var value T
-	if e := json.Unmarshal(data, &value); e != nil {
-		t.Fatal(e)
-	}
-	return value
-}
-func (f *accountFixture) challenge(email, purpose string) string {
-	f.t.Helper()
-	rows, err := f.pool.Query(f.t.Context(), "SELECT body FROM mail_outbox WHERE recipient=$1 AND kind=$2 ORDER BY created_at DESC, id DESC", email, purpose)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var m struct{ Body string }
-		if err := rows.Scan(&m.Body); err != nil {
-			f.t.Fatal(err)
-		}
-		_, after, found := strings.Cut(m.Body, `href="`)
-		if !found {
-			continue
-		}
-		href, _, found := strings.Cut(after, `"`)
-		if !found {
-			continue
-		}
-		u, e := url.Parse(html.UnescapeString(href))
-		if e != nil {
-			continue
-		}
-		values, e := url.ParseQuery(u.Fragment)
-		if e == nil && values.Get("purpose") == purpose {
-			return values.Get("token")
-		}
-	}
-	f.t.Fatal("未收到验证邮件")
-	return ""
-}
-func (f *accountFixture) register(email string) SessionCreateResponse {
-	f.t.Helper()
-	f.call("POST", "/v1/auth/register", "", map[string]any{"email": email}, 202)
-	token := f.challenge(email, "register")
-	f.call("POST", "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, 204)
-	return f.login(email, testPassword)
-}
-func (f *accountFixture) login(email, pw string) SessionCreateResponse {
-	return decode[SessionCreateResponse](f.t, f.call("POST", "/v1/auth/login", "", map[string]any{"email": email, "password": pw}, 200))
-}
-func (f *accountFixture) reauth(token, pw, operation, target string) uuid.UUID {
-	v := decode[UserReauthenticateResponse](f.t, f.call("POST", "/v1/me/reauthenticate", token, map[string]any{"method": "password", "password": pw, "operation": operation, "target": target}, 200))
-	if v.ReauthenticationID == nil {
-		f.t.Fatal("缺少重新认证引用")
-	}
-	return *v.ReauthenticationID
-}
-func (f *accountFixture) callback(flow AuthFlowResponse, code string, want int) AuthCallbackResponse {
-	u, e := url.Parse(flow.AuthorizationURL)
-	if e != nil {
-		f.t.Fatal(e)
-	}
-	data := f.call("POST", "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": code, "state": u.Query().Get("state")}, want)
-	if want != 200 {
-		return AuthCallbackResponse{}
-	}
-	return decode[AuthCallbackResponse](f.t, data)
-}
 
 func TestAccountHTTP(t *testing.T) {
 	f := newFixture(t)
@@ -206,7 +26,7 @@ func TestAccountHTTP(t *testing.T) {
 	if !strings.HasPrefix(alice.Token, "tk_") || strings.Contains(alice.Token, ".") {
 		t.Fatal("会话令牌格式错误")
 	}
-	me := decode[UserProfile](t, f.call("GET", "/v1/me", alice.Token, nil, 200))
+	me := decode[account.UserProfile](t, f.call("GET", "/v1/me", alice.Token, nil, 200))
 	if me.User.Role != "user" || !me.User.EmailVerified || len(me.Accounts) != 1 {
 		t.Fatal("注册模型错误")
 	}
@@ -222,7 +42,7 @@ func TestAccountHTTP(t *testing.T) {
 
 	t.Run("第三方绑定与目的隔离", func(t *testing.T) {
 		proof := f.reauth(alice.Token, testPassword, "link_account", "demo")
-		flow := decode[AuthFlowResponse](t, f.call("POST", "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, 200))
+		flow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, 200))
 		f.call("POST", "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, 422)
 		u, _ := url.Parse(flow.AuthorizationURL)
 		f.call("POST", "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": "alice-social", "state": "wrong"}, 422)
@@ -234,25 +54,25 @@ func TestAccountHTTP(t *testing.T) {
 		f.call("POST", "/v1/me/accounts/link/confirm", bob.Token, map[string]any{"flow_id": flow.FlowID}, 422)
 		f.call("POST", "/v1/me/accounts/link/confirm", alice.Token, map[string]any{"flow_id": flow.FlowID}, 204)
 		f.call("POST", "/v1/me/accounts/link/confirm", alice.Token, map[string]any{"flow_id": flow.FlowID}, 204)
-		loginFlow := decode[AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200))
+		loginFlow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200))
 		signed := f.callback(loginFlow, "alice-social", 200)
 		if signed.Session == nil {
 			t.Fatal("第三方登录没有会话")
 		}
-		socialMe := decode[UserProfile](t, f.call("GET", "/v1/me", signed.Session.Token, nil, 200))
+		socialMe := decode[account.UserProfile](t, f.call("GET", "/v1/me", signed.Session.Token, nil, 200))
 		if socialMe.User.ID != me.User.ID {
 			t.Fatal("同一用户的资源主体发生变化")
 		}
-		unknown := decode[AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200))
+		unknown := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200))
 		f.callback(unknown, "new-subject", 409)
-		register := decode[AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, 200))
+		register := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, 200))
 		fresh := f.callback(register, "new-subject", 200)
-		external := decode[UserProfile](t, f.call("GET", "/v1/me", fresh.Session.Token, nil, 200))
+		external := decode[account.UserProfile](t, f.call("GET", "/v1/me", fresh.Session.Token, nil, 200))
 		if external.User.Email != nil || len(external.Accounts) != 1 || external.Accounts[0].Provider == "credential" {
 			t.Fatal("第三方用户创建了占位密码或邮箱")
 		}
 		bobProof := f.reauth(bob.Token, testPassword, "link_account", "demo")
-		conflict := decode[AuthFlowResponse](t, f.call("POST", "/v1/me/accounts/link", bob.Token, map[string]any{"provider": "demo", "reauthentication_id": bobProof}, 200))
+		conflict := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/me/accounts/link", bob.Token, map[string]any{"provider": "demo", "reauthentication_id": bobProof}, 200))
 		f.callback(conflict, "alice-social", 200)
 		f.call("POST", "/v1/me/accounts/link/confirm", bob.Token, map[string]any{"flow_id": conflict.FlowID}, 409)
 	})
@@ -291,7 +111,7 @@ func TestAccountHTTP(t *testing.T) {
 		alice = f.login("newalice@example.com", testPassword)
 	})
 	t.Run("管理员与会话撤销", func(t *testing.T) {
-		bobMe := decode[UserProfile](t, f.call("GET", "/v1/me", bob.Token, nil, 200))
+		bobMe := decode[account.UserProfile](t, f.call("GET", "/v1/me", bob.Token, nil, 200))
 		if _, e := f.pool.Exec(ctx, "UPDATE users SET role='admin', auth_version=auth_version+1 WHERE id=$1", me.User.ID); e != nil {
 			t.Fatal(e)
 		}
@@ -325,14 +145,14 @@ func TestChallengeConcurrencyAndSessionExpiry(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	email := "race@example.com"
-	if e := f.s.Register(ctx, Request{ClientIP: "test"}, email); e != nil {
+	if e := f.s.Register(ctx, account.Request{ClientIP: "test"}, email); e != nil {
 		t.Fatal(e)
 	}
 	token := f.challenge(email, "register")
 	results := make(chan error, 2)
 	for range 2 {
 		go func() {
-			results <- f.s.VerifyChallenge(ctx, Request{ClientIP: "test"}, token, Verification{Purpose: "register", NewPassword: testPassword})
+			results <- f.s.VerifyChallenge(ctx, account.Request{ClientIP: "test"}, token, account.Verification{Purpose: "register", NewPassword: testPassword})
 		}()
 	}
 	success := 0
@@ -368,15 +188,15 @@ func TestChallengeConcurrencyAndSessionExpiry(t *testing.T) {
 
 func TestFederatedUserPasswordAndUnlink(t *testing.T) {
 	f := newFixture(t)
-	login := func(purpose string) SessionCreateResponse {
-		flow := decode[AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": purpose}, 200))
+	login := func(purpose string) account.SessionCreateResponse {
+		flow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": purpose}, 200))
 		return *f.callback(flow, "social-only", 200).Session
 	}
 	session := login("register")
-	me := decode[UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
+	me := decode[account.UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
 	social := me.Accounts[0].ID
 	proof := func(operation, target string) uuid.UUID {
-		result := decode[UserReauthenticateResponse](t, f.call("POST", "/v1/me/reauthenticate", session.Token, map[string]any{
+		result := decode[account.UserReauthenticateResponse](t, f.call("POST", "/v1/me/reauthenticate", session.Token, map[string]any{
 			"method": "oauth", "account_id": social, "operation": operation, "target": target,
 		}, 200))
 		return *f.callback(*result.Flow, "social-only", 200).ReauthenticationID
@@ -401,7 +221,7 @@ func TestFederatedUserPasswordAndUnlink(t *testing.T) {
 	f.call("POST", "/v1/me/accounts/"+social.String()+"/unlink", session.Token, map[string]any{"reauthentication_id": unlinkProof}, 204)
 	f.call("GET", "/v1/me", session.Token, nil, 401)
 	session = f.login("social@example.com", testPassword)
-	me = decode[UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
+	me = decode[account.UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
 	if len(me.Accounts) != 1 || me.Accounts[0].Provider != "credential" {
 		t.Fatal("解绑后登录方式错误")
 	}
@@ -411,12 +231,12 @@ func TestFederatedUserPasswordAndUnlink(t *testing.T) {
 func TestLoginCannotRacePasswordChange(t *testing.T) {
 	f := newFixture(t)
 	session := f.register("concurrent@example.com")
-	me := decode[UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
-	changer := *f.s
-	original := f.s.deps.Verify
+	me := decode[account.UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
+	original := f.deps.Passwords
+	deps := f.deps
 	verified, resume := make(chan struct{}), make(chan struct{})
-	f.s.deps.Verify = func(ctx context.Context, hash, password string) (bool, bool, error) {
-		ok, upgrade, err := original(ctx, hash, password)
+	deps.Passwords = pausedPasswords{Passwords: original, verify: func(ctx context.Context, hash, password string) (bool, bool, error) {
+		ok, upgrade, err := original.Verify(ctx, hash, password)
 		close(verified)
 		select {
 		case <-resume:
@@ -424,10 +244,11 @@ func TestLoginCannotRacePasswordChange(t *testing.T) {
 			return false, false, ctx.Err()
 		}
 		return ok, upgrade, err
-	}
+	}}
+	login := f.newService(f.pool, deps)
 	result := make(chan error, 1)
 	go func() {
-		_, err := f.s.Login(t.Context(), Request{ClientIP: "concurrent"}, "concurrent@example.com", testPassword)
+		_, err := login.Login(t.Context(), account.Request{ClientIP: "concurrent"}, "concurrent@example.com", testPassword)
 		result <- err
 	}()
 	select {
@@ -435,12 +256,12 @@ func TestLoginCannotRacePasswordChange(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("密码验证未完成")
 	}
-	err := changer.SetPassword(t.Context(), Request{Subject: authorization.Subject{UserID: me.User.ID.String(), SessionID: session.SessionID.String()}}, testPassword, "a freshly changed password", uuid.Nil)
+	err := f.s.SetPassword(t.Context(), account.Request{Subject: authorization.Subject{UserID: me.User.ID.String(), SessionID: session.SessionID.String()}}, testPassword, "a freshly changed password", uuid.Nil)
 	close(resume)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := <-result; !errors.Is(err, ErrCredentials) {
+	if err := <-result; !errors.Is(err, account.ErrCredentials) {
 		t.Fatalf("并发登录未拒绝旧凭据: %v", err)
 	}
 	f.call("GET", "/v1/me", session.Token, nil, 401)
@@ -458,7 +279,7 @@ func TestProofTokensUseBodyAndDoNotInvalidateSession(t *testing.T) {
 		t.Fatal("验证错误缺少稳定提示或泄露令牌")
 	}
 	f.call("POST", "/v1/auth/verify", session.Token, map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, 204)
-	flow := decode[AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, 200))
+	flow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, 200))
 	u, _ := url.Parse(flow.AuthorizationURL)
 	f.call("POST", "/v1/auth/oauth/callback", flow.Token, map[string]any{"code": "body-subject", "state": u.Query().Get("state")}, 422)
 	body = f.call("POST", "/v1/auth/oauth/callback", session.Token, map[string]any{"token": token, "code": "body-subject", "state": u.Query().Get("state")}, 422)
@@ -472,4 +293,31 @@ func TestProofTokensUseBodyAndDoNotInvalidateSession(t *testing.T) {
 	}
 	f.call("GET", "/v1/me", session.Token, nil, 200)
 	f.call("GET", "/v1/me", flow.Token, nil, 401)
+}
+
+// testFederation 只替换外部第三方，账户流程仍使用真实数据库。
+type testFederation struct{ t *testing.T }
+
+func (f testFederation) Enabled(id string) bool { return id == "demo" || id == "second" }
+func (f testFederation) Version(string) string  { return "v1" }
+func (f testFederation) Start(_ context.Context, id, state, verifier string) (string, string, error) {
+	if verifier == "" {
+		f.t.Error("缺少 PKCE")
+	}
+	return "https://provider.example/authorize?state=" + state, "v1", nil
+}
+func (f testFederation) Verify(_ context.Context, id, version, code, verifier string) (account.VerifiedIdentity, error) {
+	if code == "invalid" {
+		return account.VerifiedIdentity{}, account.ErrCredentials
+	}
+	return account.VerifiedIdentity{Namespace: "https://" + id + ".example", Subject: code, Name: "external user", AuthenticatedAt: time.Now()}, nil
+}
+
+type pausedPasswords struct {
+	account.Passwords
+	verify func(context.Context, string, string) (bool, bool, error)
+}
+
+func (p pausedPasswords) Verify(ctx context.Context, hash, value string) (bool, bool, error) {
+	return p.verify(ctx, hash, value)
 }

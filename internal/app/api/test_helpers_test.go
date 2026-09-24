@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"github.com/example/go-starter-kit/internal/authorization"
-	"github.com/example/go-starter-kit/internal/modules/account"
-	"github.com/example/go-starter-kit/internal/platform/password"
+	"io"
 	"log/slog"
 	"net/http"
 	"testing"
@@ -14,8 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/example/go-starter-kit/internal/identity"
-	"github.com/example/go-starter-kit/internal/modules/project"
-	"github.com/example/go-starter-kit/internal/modules/task"
 )
 
 type failingAuthenticator struct{ err error }
@@ -51,13 +47,14 @@ func testHandler(t *testing.T, cfg Config, logger *slog.Logger, authenticator id
 }
 
 func testDependencies() Dependencies {
-	hasher, e := password.New(1)
-	if e != nil {
-		panic(e)
+	cfg := Config{AuthSessionIdleTTL: 30 * time.Minute, AuthSessionMaxTTL: 24 * time.Hour, FrontendURL: "https://web.example"}
+	deps, err := NewServices(cfg, unexpectedDB{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		panic(err)
 	}
-	accounts, e := account.NewService(unexpectedDB{}, account.Options{IdleTTL: 30 * time.Minute, MaxTTL: 24 * time.Hour}, account.Dependencies{Authorizer: authorization.AdminCheckFunc(account.NewAdminChecker(unexpectedDB{}).CheckAdmin), Hash: hasher.Hash, Verify: hasher.Verify, ValidPassword: password.Validate})
-	if e != nil {
-		panic(e)
-	}
-	return Dependencies{Projects: project.NewService(unexpectedDB{}), Tasks: task.NewService(unexpectedDB{}), Accounts: accounts, Authenticator: failingAuthenticator{identity.ErrUnauthorized}, Ready: func(context.Context) error { return nil }}
+	deps.Authenticator = failingAuthenticator{identity.ErrUnauthorized}
+	deps.Ready = func(context.Context) error { return nil }
+	return deps
 }
+
+func (unexpectedDB) Ping(context.Context) error { panic("unexpected database access") }

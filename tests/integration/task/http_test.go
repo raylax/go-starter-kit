@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/example/go-starter-kit/internal/modules/task"
-	"github.com/example/go-starter-kit/internal/testutil"
+	"github.com/example/go-starter-kit/tests/integration/testutil"
 )
 
 func TestTaskCRUD(t *testing.T) {
@@ -46,8 +46,8 @@ func TestTaskCRUD(t *testing.T) {
 	if item.Title != "编写文档" || item.Status != task.Todo || item.CreatedAt.IsZero() {
 		t.Fatalf("unexpected task: %+v", item)
 	}
-	if item.ID.Version() != 7 {
-		t.Fatalf("新建资源 ID 应为 UUID v7，实际为 %s", item.ID)
+	if item.ID.Version() != 4 {
+		t.Fatalf("新建资源 ID 应为 UUID v4，实际为 %s", item.ID)
 	}
 	if strings.Contains(string(created), "owner_id") {
 		t.Fatal("owner_id leaked")

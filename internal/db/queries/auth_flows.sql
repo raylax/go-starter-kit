@@ -9,9 +9,6 @@ SELECT * FROM auth_flows WHERE token_hash = $1 AND expires_at > now();
 -- name: GetFlow :one
 SELECT * FROM auth_flows WHERE id = $1 AND expires_at > now();
 
--- name: LockFlow :one
-SELECT * FROM auth_flows WHERE id = $1 AND expires_at > now() FOR UPDATE;
-
 -- name: ClaimFlow :execrows
 UPDATE auth_flows SET status = 'processing' WHERE id = $1 AND status = 'pending' AND expires_at > now();
 

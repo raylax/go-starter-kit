@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/example/go-starter-kit/internal/identity"
@@ -26,11 +25,26 @@ type Dependencies struct {
 	Ready         func(context.Context) error
 }
 
-func NewDependencies(pool *pgxpool.Pool, authenticator identity.Authenticator, accounts *account.Service, ready func(context.Context) error) Dependencies {
-	if pool == nil {
-		return Dependencies{Authenticator: authenticator, Ready: ready}
+// Database 是应用装配所需的数据库能力，生产与测试使用同一构造路径。
+type Database interface {
+	account.Database
+	Ping(context.Context) error
+}
+
+// NewServices 构造普通业务依赖，不访问在线数据库；生命周期由调用者管理。
+func NewServices(cfg Config, database Database, logger *slog.Logger) (Dependencies, error) {
+	if database == nil || logger == nil {
+		return Dependencies{}, fmt.Errorf("应用依赖不完整")
 	}
-	return Dependencies{Projects: project.NewService(pool), Tasks: task.NewService(pool), Accounts: accounts, Authenticator: authenticator, Ready: ready}
+	accounts, err := newAccounts(cfg, database, newAuthorizer(database), logger)
+	if err != nil {
+		return Dependencies{}, err
+	}
+	authenticator, err := newAuthenticator(accounts)
+	if err != nil {
+		return Dependencies{}, err
+	}
+	return Dependencies{Projects: project.NewService(database), Tasks: task.NewService(database), Accounts: accounts, Authenticator: authenticator, Ready: database.Ping}, nil
 }
 
 func newAuthenticator(accounts *account.Service) (identity.Authenticator, error) {
@@ -52,7 +66,7 @@ func NewHandler(cfg Config, logger *slog.Logger, deps Dependencies) (http.Handle
 	if logger == nil || deps.Projects == nil || deps.Tasks == nil || deps.Accounts == nil || deps.Authenticator == nil || deps.Ready == nil {
 		return nil, nil, fmt.Errorf("incomplete application dependencies")
 	}
-	handler, api := httpapi.New(httpapi.Config{RequestTimeout: cfg.RequestTimeout, DocsEnabled: cfg.DocsEnabled, AllowedOrigins: cfg.AllowedOrigins}, logger)
+	handler, api := httpapi.New(httpapi.Config{RequestTimeout: cfg.RequestTimeout, DocsEnabled: cfg.DocsEnabled}, logger)
 	for _, module := range routeCatalog() {
 		module.bind(api, deps)
 	}

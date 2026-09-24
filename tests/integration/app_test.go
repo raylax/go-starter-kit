@@ -15,14 +15,15 @@ import (
 
 	app "github.com/example/go-starter-kit/internal/app/api"
 	"github.com/example/go-starter-kit/internal/db"
-	"github.com/example/go-starter-kit/internal/testutil"
+	"github.com/example/go-starter-kit/tests/integration/testutil"
 )
 
 func TestApplicationAndMigrations(t *testing.T) {
 	ctx := t.Context()
 	pool, databaseURL := testutil.Database(t)
-	authenticator := testutil.Authenticator{Subject: "alice"}
-	handler, _, err := app.NewHandler(app.Config{RequestTimeout: 5 * time.Second, DocsEnabled: true}, slog.New(slog.NewJSONHandler(io.Discard, nil)), app.NewDependencies(pool, authenticator, accountService(t, pool), pool.Ping))
+	deps := applicationServices(t, pool)
+	deps.Authenticator = testutil.Authenticator{Subject: "alice"}
+	handler, _, err := app.NewHandler(app.Config{RequestTimeout: 5 * time.Second, DocsEnabled: true}, slog.New(slog.NewJSONHandler(io.Discard, nil)), deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,16 +49,17 @@ func TestApplicationAndMigrations(t *testing.T) {
 		}
 	}
 	// 基线一次创建全部业务表，重复执行 up 不应修改已有记录。
-	createWithDefault := func(label string) {
+	createRecords := func(label string) {
 		t.Helper()
 		for _, resource := range []struct{ table, field string }{{"projects", "name"}, {"tasks", "title"}} {
-			var id uuid.UUID
-			query := fmt.Sprintf("INSERT INTO %s (owner_id, %s) VALUES ('alice', $1) RETURNING id", resource.table, resource.field)
-			if err := pool.QueryRow(ctx, query, label).Scan(&id); err != nil {
+			id := uuid.New()
+			var storedID uuid.UUID
+			query := fmt.Sprintf("INSERT INTO %s (id, owner_id, %s) VALUES ($1, 'alice', $2) RETURNING id", resource.table, resource.field)
+			if err := pool.QueryRow(ctx, query, id, label).Scan(&storedID); err != nil {
 				t.Fatal(err)
 			}
-			if id.Version() != 7 {
-				t.Fatalf("%s 默认 ID 不是 UUID v7", resource.table)
+			if storedID != id {
+				t.Fatalf("%s 未保存应用传入的 ID", resource.table)
 			}
 		}
 	}
@@ -75,7 +77,7 @@ func TestApplicationAndMigrations(t *testing.T) {
 		}
 	}
 	assertTables(true)
-	createWithDefault("初始化记录")
+	createRecords("初始化记录")
 	if err := db.Migrate(ctx, databaseURL, "up"); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +97,7 @@ func TestApplicationAndMigrations(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTables(true)
-	createWithDefault("重建后的记录")
+	createRecords("重建后的记录")
 	request(alice, "GET", "/v1/projects", "", true, 200)
 	request(alice, "GET", "/v1/tasks", "", true, 200)
 	pool.Close()

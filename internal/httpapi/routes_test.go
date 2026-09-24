@@ -43,7 +43,7 @@ func TestMapEndpointExecutionAndPresentation(t *testing.T) {
 			api := humachi.New(router, huma.DefaultConfig("adapter test", "1"))
 			service := new(int)
 			calls, presentations := 0, 0
-			route := MapEndpoint(huma.Operation{OperationID: "mapped", Method: http.MethodGet, Path: "/mapped", DefaultStatus: http.StatusCreated},
+			route := MapEndpoint(NewOperation(Public, huma.Operation{OperationID: "mapped", Method: http.MethodGet, Path: "/mapped", DefaultStatus: http.StatusCreated}),
 				func(got *int, ctx context.Context, input *adapterInput) (string, error) {
 					calls++
 					if got != service || ctx.Value(adapterContextKey{}) != "request-context" || input.Value != "hello" {
@@ -90,7 +90,7 @@ func TestNoContentEndpoint(t *testing.T) {
 		router := chi.NewRouter()
 		api := humachi.New(router, huma.DefaultConfig("adapter test", "1"))
 		calls := 0
-		route := NoContentEndpoint(huma.Operation{OperationID: "delete-item", Method: http.MethodDelete, Path: "/item"}, func(_ struct{}, _ context.Context, _ *struct{}) error { calls++; return tc.err })
+		route := NoContentEndpoint(NewOperation(Public, huma.Operation{OperationID: "delete-item", Method: http.MethodDelete, Path: "/item"}), func(_ struct{}, _ context.Context, _ *struct{}) error { calls++; return tc.err })
 		route.Bind(api, struct{}{})
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/item", nil))
@@ -105,14 +105,14 @@ func TestNoContentEndpoint(t *testing.T) {
 
 func TestAdapterDescriptionDoesNotExecuteCallbacks(t *testing.T) {
 	api := humachi.New(chi.NewRouter(), huma.DefaultConfig("adapter test", "1"))
-	mapped := MapEndpoint(huma.Operation{OperationID: "mapped", Method: http.MethodGet, Path: "/mapped"},
+	mapped := MapEndpoint(NewOperation(Public, huma.Operation{OperationID: "mapped", Method: http.MethodGet, Path: "/mapped"}),
 		func(_ struct{}, _ context.Context, _ *adapterInput) (string, error) {
 			t.Fatal("描述契约时执行了业务调用")
 			return "", nil
 		},
 		func(string) *adapterOutput { t.Fatal("描述契约时执行了响应组装"); return nil },
 	)
-	empty := NoContentEndpoint(huma.Operation{OperationID: "delete-item", Method: http.MethodDelete, Path: "/item"}, func(_ struct{}, _ context.Context, _ *struct{}) error {
+	empty := NoContentEndpoint(NewOperation(Public, huma.Operation{OperationID: "delete-item", Method: http.MethodDelete, Path: "/item"}), func(_ struct{}, _ context.Context, _ *struct{}) error {
 		t.Fatal("描述契约时执行了删除")
 		return nil
 	})
@@ -120,5 +120,52 @@ func TestAdapterDescriptionDoesNotExecuteCallbacks(t *testing.T) {
 	empty.Describe(api)
 	if api.OpenAPI().Paths["/mapped"].Get == nil || api.OpenAPI().Paths["/item"].Delete == nil {
 		t.Fatal("离线契约缺少路由")
+	}
+}
+
+func TestRoutePolicyIsExplicitAndControlsContract(t *testing.T) {
+	for _, policy := range []AuthPolicy{Public, Session} {
+		api := humachi.New(chi.NewRouter(), huma.DefaultConfig("test", "1"))
+		route := Endpoint(NewOperation(policy, huma.Operation{OperationID: "policy", Method: "GET", Path: "/policy"}), func(struct{}, context.Context, *struct{}) (*struct{}, error) { return nil, nil })
+		route.Describe(api)
+		security := api.OpenAPI().Paths["/policy"].Get.Security
+		if route.Policy() != policy {
+			t.Fatal("运行时策略发生漂移")
+		}
+		if policy == Public && len(security) != 0 {
+			t.Fatal("公开路由错误声明认证")
+		}
+		if policy == Session {
+			if len(security) != 1 {
+				t.Fatal("会话路由缺少认证声明")
+			}
+			if _, ok := security[0]["bearer"]; !ok {
+				t.Fatal("会话路由缺少 Bearer 声明")
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		build func() Operation
+	}{
+		{"未声明", func() Operation { return Operation{} }},
+		{"未知策略", func() Operation { return NewOperation("unknown", huma.Operation{}) }},
+		{"独立声明 Security", func() Operation {
+			return NewOperation(Public, huma.Operation{Security: []map[string][]string{{"bearer": {}}}})
+		}},
+		{"构造后修改 Security", func() Operation {
+			op := NewOperation(Public, huma.Operation{})
+			op.Security = []map[string][]string{{"bearer": {}}}
+			return op
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("无效策略没有被拒绝")
+				}
+			}()
+			Endpoint(tc.build(), func(struct{}, context.Context, *struct{}) (*struct{}, error) { return nil, nil })
+		})
 	}
 }

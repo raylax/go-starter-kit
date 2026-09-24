@@ -11,13 +11,12 @@
 | `internal/app/api/config.go` | env 标签、配置规范化和业务校验 |
 | `internal/app/appfx/` | 公共 Fx 基础设施、启动回滚和停止预算 |
 | `internal/app/api/module.go` | API 的 Fx 依赖图 |
-| `internal/app/api/accounts.go` | 密码与 GitHub OAuth 依赖适配 |
-| `internal/app/api/authorization.go` | 公共管理员授权适配 |
+| `internal/app/api/accounts.go` | 账户依赖装配、密码与 GitHub OAuth 适配、公共管理员授权适配 |
 | `internal/app/api/run.go`、`server.go` | 运行 Fx 应用、HTTP 启停及请求排空 |
-| `internal/app/api/wire.go` | 会话认证适配、运行时依赖检查与 HTTP handler 构造 |
+| `internal/app/api/wire.go` | 共用的 NewServices 构造入口、会话认证适配、依赖检查与 HTTP handler 构造 |
 | `internal/app/api/routes.go` | 统一路由清单及离线 OpenAPI 导出 |
 
-`app.Config` 留在装配层；HTTP 接收 `httpapi.Config`，账户服务接收独立的 `account.Options` 与功能依赖。业务服务不读取环境变量，也不访问全局连接池。
+`app.Config` 留在装配层；HTTP 接收 `httpapi.Config`，账户服务接收独立的 `account.Options` 与功能依赖。业务服务不读取环境变量，也不访问全局连接池。API 与 Worker 的数据库 URL、连接数、关闭期限和遥测服务名由 `appfx.Config.Validate` 共用校验；环境变量与各入口默认值仍分别维护。日志器显式注入，不通过 SetDefault 修改进程全局日志。
 
 启动钩子响应取消和超时；Fx 回滚使用独立上下文，预留停止预算释放已启动的资源。启动顺序为遥测、数据库、HTTP 或邮件消费者，停止时反转。API 停止信号先停止接收新连接并排空请求，超过期限再取消在途请求；Worker 取消消费并等待退出。`SHUTDOWN_TIMEOUT` 限制服务排空，应用额外预留 10 秒关闭基础设施。第三方登录不在启动时访问提供商。迁移通过独立命令执行。
 
@@ -25,9 +24,11 @@
 
 `httpapi` 提供 Chi/Huma 初始化、请求标识和日志、超时上下文、异常恢复、公共错误映射、405 的 `Allow`、健康检查和操作契约。模块中的 `http.go` 声明路由并将请求映射为服务参数；`dto.go` 定义独立协议类型和模型到 DTO 的转换，通用响应包装由 `httpapi` 负责。原始业务错误由路由绑定层统一映射。
 
+路由声明按配置、处理函数、响应转换分行书写。配置使用 `huma.Operation` 的具名字段表达方法、路径、操作 ID 和说明，避免连续字符串参数；处理函数使用 `service`、`ctx`、`input` 等明确名称，响应转换复用具名函数。认证策略仍显式传入，共用的错误契约、请求上限与缓存策略由模块配置函数集中补充。
+
 `identity.Authenticator` 接收原始令牌并返回 subject 与 session ID。HTTP 中间件解析 `Authorization`，将认证结果放入请求上下文。`identity` 负责随机令牌、格式校验与摘要，不访问数据库；`account.Service` 查询会话、用户状态和认证版本，由 `app` 适配为认证接口。所有环境使用相同认证规则，无开发认证或固定演示令牌。非法凭据、认证依赖故障、请求超时分别映射为 401、503、504。
 
-每条路由声明 `Public` 或 `Session` 策略，运行时中间件与 OpenAPI 共用声明；验证与回调的 token 是必填正文，由业务校验，Authorization 专用于会话。证明失效返回 422，实际会话失效仍返回 401；管理员操作在业务事务开始前通过注入的 `authorization.Authorizer` 重新检查角色和原会话；使用普通查询，不保证授权检查与后续写入串行一致。CORS 使用精确 origin 白名单，不开启凭据 Cookie。校验错误响应删除原始值、输入字段路径和解析消息，防止密码、令牌或 OAuth code 回显。
+每条路由声明 `Public` 或 `Session` 策略，运行时中间件与 OpenAPI 共用声明；验证与回调的 token 是必填正文，由业务校验，Authorization 专用于会话。证明失效返回 422，实际会话失效仍返回 401；管理员操作在业务事务开始前通过注入的 `authorization.Authorizer` 重新检查角色和原会话；使用普通查询，不保证授权检查与后续写入串行一致。应用不配置 Origin 白名单或 CORS；跨域部署由网关处理预检和响应头，不引入 Cookie 认证。校验错误响应删除原始值、输入字段路径和解析消息，防止密码、令牌或 OAuth code 回显。
 
 ## 业务模块
 
@@ -39,9 +40,11 @@
 | `service.go` | 业务校验、所有权作用域、分页与数据库访问 |
 | `http.go` | 类型化路由声明、请求参数到服务调用的适配 |
 | `dto.go` | Huma 请求与响应类型、JSON/校验标签、业务模型到独立 DTO 的转换、公共响应类型别名 |
-| `*_test.go` | 业务单测；带 `integration` 标签的真实 HTTP 与 PostgreSQL 测试 |
+| `*_test.go` | 业务单元测试；集成测试统一放在 `tests/integration/<领域>/` |
 
 数据库行不直接成为接口返回值，业务模型也不承担接口校验标签。项目 DTO 仍名为 `Project`，任务 DTO 仍名为 `Task`，使用资源名作为 OpenAPI schema 名称。
+
+文件按完整职责聚合：项目与任务的校验、数据库行转换和存储错误策略随 `service.go` 维护；邮件状态定义归入 `model.go`，发送、结果落库与重试退避归入 `delivery.go`，轮询调度保留在 `runner.go`。账户模块按业务用例拆分，OAuth 发起、回调及完成逻辑放在同一个 `federation.go` 中。文件大小本身不作为拆分依据。
 
 `dto.go` 保留一个显式 `toDTO`。当前模型与 DTO 字段一致，可以使用 `Project(item)` 或 `Task(item)` 的结构转换；二者仍是独立类型，字段不再匹配时编译失败，再改为逐字段映射。不要将 DTO 定义为 `Record` 或 sqlc 类型的别名。模块响应别名复用 `httpapi.ItemOutput` 与 `CreatedOutput`，不再编写 `createdOutput`、`itemOutput`、`listOutput`。
 
@@ -68,9 +71,11 @@
 
 `sqlc.yaml` 只有一份生成配置，读取全部迁移与查询，生成包名为 `sqlc`。`make generate` 先清理旧的 `.sql.go` 再生成，防止改名残留，并自动规范为 `any`，`make check-generated` 检查统一输出与接口契约的一致性；生成文件不手工修改。
 
-`app/appfx` 注入数据库适配器，在 OnStart 中通过 `db.Open()` 打开连接池；业务构造函数不查询在线数据库。服务内部通过 `sqlc.New()` 构造查询，HTTP 和 DTO 不直接依赖生成代码。集中生成减少配置重复，也让跨表查询与事务使用同一套类型；同时，各业务服务都能访问完整的 `sqlc.Queries`，因此不再通过独立生成包隔离业务表的访问权限。业务仍应只操作职责范围内的数据，资源所有权必须由 SQL 条件保证。认证入口可按令牌摘要或可信第三方身份查找主体；管理员跨用户操作必须先通过公共授权接口检查角色和原会话，再开始业务事务。`audit_events` 是共享追加表，业务成功事件与变更在同一事务写入，失败记录在回滚后另写；生产数据库账号只拥有该表 INSERT 权限，查询与保留清理由独立运维权限控制。
+`app/appfx` 注入数据库适配器，在 OnStart 中通过 `db.Open()` 打开连接池；业务构造函数不查询在线数据库。服务内部通过 `sqlc.New()` 构造查询，HTTP 和 DTO 不直接依赖生成代码。集中生成减少配置重复，也让跨表查询与事务使用同一套类型；项目和任务服务继续使用各自的生成查询。账户模块通过私有 store 持有生成查询，仅显式暴露需要的操作；新增生成方法不会自动进入业务接口，架构检查禁止 store 之外构造或访问原始查询。业务仍应只操作职责范围内的数据，资源所有权必须由 SQL 条件保证。认证入口可按令牌摘要或可信第三方身份查找主体；管理员跨用户操作必须先通过公共授权接口检查角色和原会话，再开始业务事务。`audit_events` 是共享追加表，业务成功事件与变更在同一事务写入，失败记录在回滚后另写；生产数据库账号只拥有该表 INSERT 权限，查询与保留清理由独立运维权限控制。
 
 SQL 在查询、更新和删除时同时限制资源 ID 与所有者。服务仍校验 subject，防止绕过 HTTP 直接调用时访问无作用域数据。不引入通用 CRUD repository；Fx 仅用于应用装配。跨表操作复用 `db.WithTransaction(ctx, database, ErrorPolicy, fn)`，统一提交、回滚和错误映射；账户事务内通过 `newStore(tx)` 校验写入。
+
+显式锁仅保护不可接受的并发后果。低概率且可接受失败、重试或临时证明失效的竞争优先使用现有唯一约束、条件更新与版本校验，不新增协调层。只读列表和证明签发不预先锁定用户；密码、账号数量、会话安全及邮件独占领取仍保留必要保护。取消预读锁不取消数据库写入自身的锁或事务原子性。
 
 ## 公共错误处理
 
@@ -105,7 +110,7 @@ HTTP 查询标签放在 `httpapi.PageQuery`，通过 `Params()` 传入业务层�
 
 ## 测试复用
 
-应用单测通过 `internal/app/api/test_helpers_test.go` 构造默认依赖；本地会话与用户体系使用真实 PostgreSQL 验证。
+Fx 与应用测试统一通过 `api.NewServices` 构造依赖；`internal/app/api/test_helpers_test.go` 只替换测试需要的认证和健康检查能力。本地会话与用户体系使用真实 PostgreSQL 验证。
 
 真实 PostgreSQL、HTTP 请求等已有夹具继续复用；业务 CRUD、所有权、迁移链和生命周期场景保留独立断言。
 
@@ -153,15 +158,15 @@ identity → apperror、标准库
 apperror、pagination、validation → 标准库
 ```
 
-根目录的 `internal/` 通过 Go 导入规则限制仓库外部代码依赖应用实现，但不限制仓库内部各包互相导入。`tests/architecture_test.go` 继续约束内部依赖方向、数据库生成类型的使用位置以及模型/协议层隔离，并禁止生产代码依赖 `internal/testutil`。根目录 `tests/` 中的测试可以正常导入这些内部包。此仓库不提供稳定的 Go SDK，需要对外发布 SDK 时应另建明确的公共契约。
+根目录的 `internal/` 通过 Go 导入规则限制仓库外部代码依赖应用实现，但不限制仓库内部各包互相导入。`tests/architecture_test.go` 继续约束内部依赖方向、数据库生成类型的使用位置以及模型/协议层隔离，并禁止生产代码依赖 `tests/integration/testutil`。模块文件默认使用业务依赖集合，仅 `http.go/*_http.go` 与 `dto.go/*_dto.go` 是协议依赖例外，拆分到新业务文件不会解除约束。根目录 `tests/` 中的测试可以正常导入这些内部包。此仓库不提供稳定的 Go SDK，需要对外发布 SDK 时应另建明确的公共契约。
 
 ## 新增业务模块
 
 1. 在 `internal/modules/<业务>/` 建立业务模型、服务、HTTP 和 DTO，保持服务不依赖协议类型；复用公共业务错误、分页和文本校验，并声明本业务的数据库错误策略。
 2. 需要新表时，在 `internal/db/migrations/` 增加下一个全局版本的迁移；查询按完整表名命名并放入 `internal/db/queries/`。
 3. 执行 `make generate`，更新 `internal/db/sqlc/`。同一数据库下新增业务查询无需增加 sqlc 配置或修改生成脚本。
-4. 在 `internal/app/api/module.go` 注册服务构造函数，在 `wire.go` 增加 HTTP 服务依赖，在 `internal/app/api/routes.go` 的清单中绑定模块路由；受保护业务必须启用认证中间件。
-5. 添加模块业务测试和必要的真实数据库测试，复用 `internal/testutil`；跨模块与生命周期场景放入 `tests/integration`。
+4. 在 `internal/app/api/wire.go` 的 `Dependencies` 与 `NewServices` 中增加服务，Fx 和测试共用该构造入口；在 `internal/app/api/routes.go` 清单中绑定模块路由。通过 `httpapi.NewOperation` 明确声明 Public 或 Session，不直接编写 Security。
+5. 单元测试随业务代码放置；真实数据库及 HTTP 集成测试统一放入 `tests/integration/<领域>/`，复用 `tests/integration/testutil`；跨模块与生命周期场景放入 `tests/integration/` 根部。
 6. 执行 `make generate`、`make check`、`make test-integration` 和 `make build`。
 
 迁移只调整目录时必须保持版本和内容不变，防止迁移历史分叉。

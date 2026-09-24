@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/example/go-starter-kit/internal/app/appfx"
 	"os"
 	"time"
 
@@ -39,7 +40,7 @@ func NewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := validateDatabaseURL(cfg.DatabaseURL); err != nil {
+			if err := appfx.ValidateDatabaseURL(cfg.DatabaseURL); err != nil {
 				return err
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)

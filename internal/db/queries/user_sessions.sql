@@ -1,6 +1,6 @@
 -- name: CreateSession :one
-INSERT INTO user_sessions(user_id, token_hash, auth_method, auth_source_id, auth_version, idle_expires_at, absolute_expires_at)
-VALUES ($1, $2, $3, $4, $5, now() + sqlc.arg(idle_seconds)::bigint * interval '1 second', now() + sqlc.arg(max_seconds)::bigint * interval '1 second') RETURNING *;
+INSERT INTO user_sessions(id, user_id, token_hash, auth_method, auth_source_id, auth_version, idle_expires_at, absolute_expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, now() + sqlc.arg(idle_seconds)::bigint * interval '1 second', now() + sqlc.arg(max_seconds)::bigint * interval '1 second') RETURNING *;
 
 -- name: FindSession :one
 SELECT s.* FROM user_sessions s JOIN users u ON u.id = s.user_id

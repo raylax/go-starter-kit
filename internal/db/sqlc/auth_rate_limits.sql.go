@@ -15,7 +15,7 @@ VALUES ($1, 1, now() + $2::bigint * interval '1 second')
 ON CONFLICT (bucket_key) DO UPDATE SET
  count = CASE WHEN auth_rate_limits.expires_at <= now() THEN 1 ELSE LEAST(auth_rate_limits.count + 1, 1000000) END,
  expires_at = CASE WHEN auth_rate_limits.expires_at <= now() THEN EXCLUDED.expires_at ELSE auth_rate_limits.expires_at END
-RETURNING count
+RETURNING count, GREATEST(1, ceil(extract(epoch FROM (expires_at - now()))))::bigint AS retry_after_seconds
 `
 
 type RateLimitParams struct {
@@ -23,9 +23,14 @@ type RateLimitParams struct {
 	WindowSeconds int64
 }
 
-func (q *Queries) RateLimit(ctx context.Context, arg RateLimitParams) (int32, error) {
+type RateLimitRow struct {
+	Count             int32
+	RetryAfterSeconds int64
+}
+
+func (q *Queries) RateLimit(ctx context.Context, arg RateLimitParams) (RateLimitRow, error) {
 	row := q.db.QueryRow(ctx, rateLimit, arg.BucketKey, arg.WindowSeconds)
-	var count int32
-	err := row.Scan(&count)
-	return count, err
+	var i RateLimitRow
+	err := row.Scan(&i.Count, &i.RetryAfterSeconds)
+	return i, err
 }

@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+type Options struct {
+	IdleTTL, MaxTTL time.Duration
+	FrontendURL     string
+}
+
 type Database interface {
 	sqlc.DBTX
 	db.Beginner
@@ -19,8 +24,11 @@ type Service struct {
 }
 
 func NewService(database Database, options Options, deps Dependencies) (*Service, error) {
-	if database == nil || options.IdleTTL < time.Minute || options.MaxTTL < options.IdleTTL || deps.Hash == nil || deps.Verify == nil || deps.ValidPassword == nil || deps.Authorizer == nil {
+	if database == nil || options.IdleTTL < time.Minute || options.MaxTTL < options.IdleTTL || deps.Passwords == nil || deps.Authorizer == nil || deps.Logger == nil {
 		return nil, fmt.Errorf("账户服务依赖不完整")
+	}
+	if deps.Federation == nil {
+		deps.Federation = disabledFederation{}
 	}
 	return &Service{database: database, queries: newStore(database), options: options, deps: deps}, nil
 }

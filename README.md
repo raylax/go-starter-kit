@@ -13,7 +13,7 @@ make migrate-up
 make dev
 ```
 
-业务接口示例中的 `SESSION_TOKEN` 需设置为正常登录返回的 `tk_` 令牌，没有固定演示令牌。当前邮件为日志 mock，不提供真实邮箱验证闭环；使用注册流程需接入真实发送器。前端 origin 和第三方协议端点统一要求 HTTPS。
+业务接口示例中的 `SESSION_TOKEN` 需设置为正常登录返回的 `tk_` 令牌，没有固定演示令牌。当前邮件为日志 mock，不提供真实邮箱验证闭环；使用注册流程需接入真实发送器。第三方协议端点要求 HTTPS；跨域部署由网关配置 CORS。
 
 打开 <http://127.0.0.1:8080/docs> 查看交互式 API 文档，<http://127.0.0.1:8080/openapi.json> 获取契约。
 
@@ -35,7 +35,7 @@ curl 'http://127.0.0.1:8080/v1/projects?limit=20&offset=0' \
 | --- | --- |
 | HTTP 路由 | Chi v5，兼容标准 `net/http` |
 | API 契约 | Huma v2，Go 类型生成 OpenAPI，运行时请求校验 |
-| 数据库 | PostgreSQL 18，pgx v5 连接池 |
+| 数据库 | PostgreSQL，pgx v5 连接池 |
 | 数据访问 | sqlc 生成类型安全的查询方法 |
 | 迁移 | Goose，SQL 嵌入二进制，独立命令执行 |
 | 认证 | 数据库会话 + `tk_` 随机令牌；密码及 OAuth 登录 |
@@ -76,9 +76,14 @@ internal/                   应用实现，限制外部项目导入
     federation/             GitHub OAuth 适配
     mail/                   邮件发送接口与日志 mock
     telemetry/              OpenTelemetry 初始化与关闭
-  testutil/                 公共 HTTP、PostgreSQL 夹具
 tests/                     仓库级测试
-  integration/              应用装配、迁移链、健康检查和生命周期测试
+  integration/              独立集成测试；根部为应用装配、迁移和生命周期
+    account/                 账户与认证
+    project/                 项目
+    task/                    任务
+    mailoutbox/              邮件队列
+    locker/                  PostgreSQL 锁
+    testutil/                公共 HTTP、PostgreSQL 夹具
   architecture_test.go      静态依赖边界检查
 api/openapi.json            生成的 API 契约，不手工修改
 docs/architecture.md        功能边界与新增模块说明
@@ -86,7 +91,7 @@ docs/architecture.md        功能边界与新增模块说明
 
 HTTP 层负责校验和协议映射；业务规则位于各模块的 `Service`；数据库行转换为业务模型，再由 HTTP 层转换为独立 API DTO。业务模块复用认证中间件，通过构造函数传依赖，不使用全局数据库或通用 CRUD repository；Fx 仅在 app 层装配依赖。账户模块显式提交跨表事务，关键业务变更与审计写入共同提交；不在 HTTP 中间件里隐式提交事务。
 
-详细边界见 [架构说明](docs/architecture.md)。`internal` 由 Go 工具链限制外部项目导入；架构测试继续约束内部反向依赖、业务模块互相引用以及 HTTP/DTO 直接使用数据库生成类型。公共夹具集中在 `internal/testutil`，仅供测试使用。`app` 统一装配配置和依赖，`identity` 不接收全局配置或 HTTP 请求头。
+详细边界见 [架构说明](docs/architecture.md)。`internal` 由 Go 工具链限制外部项目导入；架构测试继续约束内部反向依赖、业务模块互相引用以及 HTTP/DTO 直接使用数据库生成类型。公共夹具集中在 `tests/integration/testutil`，仅供测试使用。`app` 统一装配配置和依赖，`identity` 不接收全局配置或 HTTP 请求头。
 
 API 入口支持 `go run ./cmd/api`、`go run ./cmd/api migrate up`、`go run ./cmd/api openapi`。离线 OpenAPI 复用类型化路由清单，不加载运行配置或初始化数据库或第三方服务；运行时构造函数拒绝缺失依赖。直接运行命令需要自行注入环境，`make dev` 则自动读取 `.env`。
 
@@ -115,9 +120,9 @@ API 入口支持 `go run ./cmd/api`、`go run ./cmd/api migrate up`、`go run ./
 
 列表按 `created_at DESC, id DESC` 排序，默认 `limit=20`，最大 100；`offset` 最大 10000，返回 `items`、`has_more`、`limit`、`offset`，空列表始终是 `[]`。这是简单偏移分页，在并发插入/删除期间不保证跨页快照一致；需要大数据量稳定翻页时应改为游标分页。
 
-错误使用 `application/problem+json`（`status`、`title`、`detail`，校验错误不回显原始字段值、路径或解析消息，避免泄露凭据），保留真实 HTTP 状态码。每个响应携带服务端生成的 UUID v7 `X-Request-ID`。数据库内部错误记录到日志，对客户端返回通用错误。未知字段/查询参数拒绝，请求体上限 1 MiB。405 同时返回 `Allow`，列出该路径实际注册的方法。业务模块通过 `apperror` 声明业务错误，由 `httpapi.Endpoint` 统一调用 `httpapi.FromError`；`httpapi.ProtectedOperations` 集中维护认证声明、请求限制和基础错误契约。未知异常只向客户端返回通用提示，底层原因通过错误链保留用于排查。
+错误使用 `application/problem+json`（`status`、`title`、`detail`，校验错误不回显原始字段值、路径或解析消息，避免泄露凭据），保留真实 HTTP 状态码。每个响应携带服务端生成的 UUID v4 `X-Request-ID`。数据库内部错误记录到日志，对客户端返回通用错误。未知字段/查询参数拒绝，请求体上限 1 MiB。405 同时返回 `Allow`，列出该路径实际注册的方法。业务模块通过 `apperror` 声明业务错误，由 `httpapi.Endpoint` 统一调用 `httpapi.FromError`；`httpapi.ProtectedOperations` 集中维护认证声明、请求限制和基础错误契约。未知异常只向客户端返回通用提示，底层原因通过错误链保留用于排查。
 
-项目和任务的新记录主键由 PostgreSQL 18 的 `uuidv7()` 生成。`00001_init.sql` 直接使用 UUID v7 默认值；Go 中生成 UUID 使用 `uuid.NewV7()`，数据库列和 DTO 仍使用 UUID 类型。
+所有新记录的 UUID 由 Go 代码生成并显式传入 SQL，默认使用 UUID v4（`uuid.New()`）。`00001_init.sql` 的 UUID 主键不设置生成默认值，不依赖 PostgreSQL 的 UUID 生成功能或特定版本。生成策略保留在各资源的创建代码中，后续可按表独立切换 v7，数据库列和 DTO 仍使用 UUID 类型。开发和测试镜像当前选用 PostgreSQL 18，仅作为运行基线。
 
 OpenAPI schema 统一使用资源名和用途：`Project` / `Task`、`ProjectCreateRequest` / `TaskCreateRequest`、`ProjectUpdateRequest` / `TaskUpdateRequest`、`ProjectListResponse` / `TaskListResponse`。公共类型为 `HealthResponse`、`ErrorResponse`、`ErrorDetail`。修改 DTO 后运行 `make generate`，使用 OpenAPI 生成 SDK 时需同步重新生成客户端。
 
@@ -170,10 +175,10 @@ curl -i -X DELETE "http://127.0.0.1:8080/v1/tasks/$TASK_ID" \
 
 已实现邮箱注册/恢复、密码登录、GitHub OAuth 登录及显式绑定、重新认证、会话管理和用户管理。账户接口按 `Authentication`、`Profile`、`Account Security`、`Linked Accounts`、`Sessions`、`User Administration` 六组展示；20 个账户接口、前端回调协议见 [认证设计](docs/auth-design.md)。无 Cookie、刷新令牌或本地 JWT，也不暴露 JWKS。服务启动不依赖提供商在线。
 
-API 需要受信前端 origin。邮件当前由日志 mock 接受请求，不实际投递、不输出地址、正文或验证链接；注册/恢复返回 202 表示请求已受理，不保证生成邮件或实际送达。邮件通过持久化 `mail_outbox` 由 Worker 异步投递，无 SMTP 配置，发送抽象及未来适配方式见 [认证运行说明](docs/auth-operations.md)。
+API 通过 `FRONTEND_URL` 生成邮件验证链接。邮件当前由日志 mock 接受请求，不实际投递、不输出地址、正文或验证链接；注册/恢复返回 202 表示请求已受理，不保证生成邮件或实际送达。邮件通过持久化 `mail_outbox` 由 Worker 异步投递，无 SMTP 配置，发送抽象及未来适配方式见 [认证运行说明](docs/auth-operations.md)。
 
 
-会话无效返回 401（`detail=session_invalid`）；验证、流程及重新认证证明失效返回 422（分别为 `verification_invalid`、`flow_invalid`、`reauthentication_invalid`），不影响有效会话；密码登录失败仍为 401，不能误当作当前会话失效。认证数据库故障返回 503，超时返回 504。精确来源白名单控制 CORS；客户端为会话设置 Authorization，不发送 Cookie。验证和 OAuth 回调使用正文 `token`；登录和流程创建响应的令牌字段也统一为 `token`。
+会话无效返回 401（`detail=session_invalid`）；验证、流程及重新认证证明失效返回 422（分别为 `verification_invalid`、`flow_invalid`、`reauthentication_invalid`），不影响有效会话；密码登录失败仍为 401，不能误当作当前会话失效。认证数据库故障返回 503，超时返回 504。应用不检查 Origin，也不生成 CORS 响应头；跨域访问由网关配置。客户端为会话设置 Authorization，不发送 Cookie。验证和 OAuth 回调使用正文 `token`；登录和流程创建响应的令牌字段也统一为 `token`。
 
 ## 配置与运行
 
@@ -187,14 +192,13 @@ API 需要受信前端 origin。邮件当前由日志 mock 接受请求，不实
 | `REQUEST_TIMEOUT` | `15s` | 业务请求上下文超时，数据库调用继承此期限 |
 | `SHUTDOWN_TIMEOUT` | `10s` | API 排空或 Worker 停止预算；基础设施额外预留 10 秒 |
 | `DOCS_ENABLED` | `false` | 暴露 `/docs` 和 `/openapi.json` |
-| `FRONTEND_URL` | 必填 | 无尾部斜杠的前端 origin |
-| `ALLOWED_ORIGINS` | 空 | 逗号分隔的精确 CORS origin，必须包含前端地址 |
+| `FRONTEND_URL` | 必填 | 生成 `/auth/verify` 邮件链接的前端 HTTP(S) 地址 |
 | `AUTH_PROVIDERS_FILE` | 空 | 可信提供商 JSON；空表示只启用密码 |
 | `AUTH_SESSION_IDLE_TTL` / `AUTH_SESSION_MAX_TTL` | `30m` / `24h` | 闲置/绝对会话期限 |
 | `OTEL_ENABLED` | `false` | 启用 OTLP 导出 |
 | `OTEL_SERVICE_NAME` | 无 | `OTEL_ENABLED=true` 时必须显式设置非空服务名称 |
 
-启动阶段收到 SIGINT/SIGTERM 会取消正在进行的依赖初始化，包括数据库连接。启动完成后，收到停止信号会停止接收新连接并排空请求，期间保持正在进行的认证和数据库调用可用；超过预算则取消请求上下文并关闭连接。HTTP 有请求头/请求体读取、写入和空闲连接期限。业务超时通过 context 协作取消；新增外部调用也必须传递 context。跨域只允许配置的精确 origin。数据库维护跨副本的认证限速计数；IP 直接使用连接对端地址，不信任客户端转发头。代理部署应配合网关限流，当前同一代理后的请求共享该 IP 桶。TLS 终止按网关部署设置。
+启动阶段收到 SIGINT/SIGTERM 会取消正在进行的依赖初始化，包括数据库连接。启动完成后，收到停止信号会停止接收新连接并排空请求，期间保持正在进行的认证和数据库调用可用；超过预算则取消请求上下文并关闭连接。HTTP 有请求头/请求体读取、写入和空闲连接期限。业务超时通过 context 协作取消；新增外部调用也必须传递 context。跨域部署由网关处理预检及 CORS 响应头，同源部署无需额外处理。数据库维护跨副本的认证限速计数；IP 直接使用连接对端地址，不信任客户端转发头。代理部署应配合网关限流，当前同一代理后的请求共享该 IP 桶。TLS 终止按网关部署设置。
 
 生产迁移作为独立发布步骤执行：`api migrate up`，API 启动不自动迁移。生产推荐单个迁移任务和独立 DDL 账号；API 使用最小 DML 权限账号。当前只有一条初始化迁移，`migrate down` 会删除全部业务表及数据，勿用于常规生产发布。
 
@@ -225,7 +229,7 @@ make db-down            # 停止本地开发数据库，保留命名卷
 
 代码注释和说明文档统一使用中文，Go 标识符保持英文；生成器标记与工具指令保留固定格式。Go 代码统一使用 `any` / `...any`。sqlc 上游模板的旧写法在 `make generate` 中通过 Go AST 格式工具自动转换，`make lint` 同时检查此约定；不要绕过 Make 单独生成后提交。
 
-集成测试覆盖项目和任务 CRUD、分页、任务状态筛选/更新、所有权隔离、输入校验、项目并发唯一性、数据库锁导致的超时、迁移 up/down/up 和健康检查；基线回滚删除全部业务表，之后重新应用基线。Docker 不可用时测试直接失败，不悄悄跳过。账户测试覆盖挑战并发、流程重放、跨用户绑定、会话撤销、邮件事务入队及审计失败回滚；mailoutbox 测试覆盖重试、租约归属与终态载荷清理；遥测测试使用本地 OTLP 接收端，验证 trace/metric 导出。它们不等于真实生产身份提供商或监控平台的联调验收。
+集成测试统一位于 `tests/integration/`，通过 `make test-integration` 独立运行；业务目录只保留单元测试。集成测试覆盖项目和任务 CRUD、分页、任务状态筛选/更新、所有权隔离、输入校验、项目并发唯一性、数据库锁导致的超时、迁移 up/down/up 和健康检查；基线回滚删除全部业务表，之后重新应用基线。Docker 不可用时测试直接失败，不悄悄跳过。账户测试覆盖挑战并发、流程重放、跨用户绑定、会话撤销、邮件事务入队及审计失败回滚；mailoutbox 测试覆盖重试、租约归属与终态载荷清理；遥测测试使用本地 OTLP 接收端，验证 trace/metric 导出。它们不等于真实生产身份提供商或监控平台的联调验收。
 
 GitHub Actions 执行相同检查、数据库集成测试和 Docker 构建。运行镜像采用非 root distroless，包含迁移与 OpenAPI 命令；交付时按环境传入配置和密钥。
 
@@ -244,7 +248,7 @@ GitHub Actions 执行相同检查、数据库集成测试和 Docker 构建。运
 
 `make build` 同时编译 `.bin/api` 和 `.bin/worker`，可用 `make build-api`、`make build-worker` 单独构建。开发时分别运行 `make dev` 和 `make dev-worker`；生产环境分别部署两个进程。
 
-Worker 消费持久化邮件队列，需要 `DATABASE_URL`，支持 `DB_MAX_CONNS`（默认 5）和 `MAIL_POLL_INTERVAL`（默认 2s）。共用 `.env.example` 时，显式的 `DB_MAX_CONNS=10` 会覆盖 Worker 默认值。其余配置为 `LOG_LEVEL`、`SHUTDOWN_TIMEOUT`、`OTEL_ENABLED`、`OTEL_SERVICE_NAME`；启用遥测时服务名必须显式设置。
+Worker 消费持久化邮件队列，需要 `DATABASE_URL`，支持 `DB_MAX_CONNS`（默认 5）和 `MAIL_POLL_INTERVAL`（默认 1s）。共用 `.env.example` 时，显式的 `DB_MAX_CONNS=10` 会覆盖 Worker 默认值。其余配置为 `LOG_LEVEL`、`SHUTDOWN_TIMEOUT`、`OTEL_ENABLED`、`OTEL_SERVICE_NAME`；启用遥测时服务名必须显式设置。
 
 认证临时数据已停止自动清理；过期会话及证明仍会在认证查询中失效，但记录不会自动删除。
 

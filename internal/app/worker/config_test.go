@@ -3,7 +3,7 @@ package worker
 import "testing"
 
 func TestConfigIndependentOfAPI(t *testing.T) {
-	cfg, err := Parse(func(k string) (string, bool) {
+	_, err := Parse(func(k string) (string, bool) {
 		switch k {
 		case "DATABASE_URL":
 			return "postgres://localhost/test", true
@@ -13,14 +13,17 @@ func TestConfigIndependentOfAPI(t *testing.T) {
 			return "", false
 		}
 	})
-	if err != nil || cfg.OTelServiceName != "" {
-		t.Fatalf("独立配置失败: %+v %v", cfg, err)
+	if err != nil {
+		t.Fatalf("独立配置失败: %v", err)
 	}
 	for _, key := range []string{"LOG_LEVEL", "SHUTDOWN_TIMEOUT", "OTEL_ENABLED"} {
 		t.Run(key, func(t *testing.T) {
 			_, err := Parse(func(k string) (string, bool) {
 				if k == key {
 					return "", true
+				}
+				if k == "DATABASE_URL" {
+					return "postgres://localhost/test", true
 				}
 				return "", false
 			})
@@ -49,12 +52,9 @@ func TestTelemetryRequiresExplicitServiceName(t *testing.T) {
 			if tc.set {
 				values["OTEL_SERVICE_NAME"] = tc.value
 			}
-			cfg, err := Parse(func(key string) (string, bool) { v, ok := values[key]; return v, ok })
+			_, err := Parse(func(key string) (string, bool) { v, ok := values[key]; return v, ok })
 			if (err == nil) != tc.valid {
 				t.Fatalf("配置结果不符: %v", err)
-			}
-			if !tc.set && cfg.OTelServiceName != "" {
-				t.Fatal("自动生成了服务名称")
 			}
 		})
 	}

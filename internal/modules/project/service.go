@@ -3,13 +3,16 @@ package project
 import (
 	"context"
 
-	"github.com/google/uuid"
-
+	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
+	"github.com/example/go-starter-kit/internal/validation"
+	"github.com/google/uuid"
 )
+
+var storageErrors = db.ErrorPolicy{Resource: "project", NotFound: ErrNotFound, UniqueConstraints: map[string]*apperror.Error{"projects_owner_name_key": ErrConflict}}
 
 type Service struct{ queries *sqlc.Queries }
 
@@ -23,7 +26,7 @@ func (s *Service) Create(ctx context.Context, owner, name, description string) (
 	if err != nil {
 		return Record{}, err
 	}
-	row, err := s.queries.CreateProject(ctx, sqlc.CreateProjectParams{OwnerID: owner, Name: name, Description: description})
+	row, err := s.queries.CreateProject(ctx, sqlc.CreateProjectParams{ID: uuid.New(), OwnerID: owner, Name: name, Description: description})
 	return fromRow(row), db.MapError(err, storageErrors)
 }
 
@@ -74,4 +77,16 @@ func (s *Service) Delete(ctx context.Context, owner string, id uuid.UUID) error 
 		return ErrNotFound
 	}
 	return nil
+}
+
+func validate(name, description string) (string, error) {
+	name, valid := validation.RequiredText(name, 100)
+	if !valid || !validation.TextWithin(description, 2000) {
+		return "", ErrInvalid
+	}
+	return name, nil
+}
+
+func fromRow(row sqlc.Project) Record {
+	return Record{ID: row.ID, Name: row.Name, Description: row.Description, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }

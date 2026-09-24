@@ -45,11 +45,16 @@ func (q *Queries) BumpUserVersion(ctx context.Context, id uuid.UUID) error {
 }
 
 const createFederatedUser = `-- name: CreateFederatedUser :one
-INSERT INTO users(display_name, status) VALUES ($1, 'active') RETURNING id, display_name, email, email_normalized, email_verified_at, recovery_enabled, status, role, auth_version, created_at, updated_at
+INSERT INTO users(id, display_name, status) VALUES ($1, $2, 'active') RETURNING id, display_name, email, email_normalized, email_verified_at, recovery_enabled, status, role, auth_version, created_at, updated_at
 `
 
-func (q *Queries) CreateFederatedUser(ctx context.Context, displayName string) (User, error) {
-	row := q.db.QueryRow(ctx, createFederatedUser, displayName)
+type CreateFederatedUserParams struct {
+	ID          uuid.UUID
+	DisplayName string
+}
+
+func (q *Queries) CreateFederatedUser(ctx context.Context, arg CreateFederatedUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createFederatedUser, arg.ID, arg.DisplayName)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -68,18 +73,19 @@ func (q *Queries) CreateFederatedUser(ctx context.Context, displayName string) (
 }
 
 const createPendingUser = `-- name: CreatePendingUser :one
-INSERT INTO users(email, email_normalized) VALUES ($1, $2)
+INSERT INTO users(id, email, email_normalized) VALUES ($1, $2, $3)
 ON CONFLICT (email_normalized) DO UPDATE SET email_normalized = users.email_normalized
 RETURNING id, display_name, email, email_normalized, email_verified_at, recovery_enabled, status, role, auth_version, created_at, updated_at
 `
 
 type CreatePendingUserParams struct {
+	ID              uuid.UUID
 	Email           *string
 	EmailNormalized *string
 }
 
 func (q *Queries) CreatePendingUser(ctx context.Context, arg CreatePendingUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createPendingUser, arg.Email, arg.EmailNormalized)
+	row := q.db.QueryRow(ctx, createPendingUser, arg.ID, arg.Email, arg.EmailNormalized)
 	var i User
 	err := row.Scan(
 		&i.ID,

@@ -12,12 +12,13 @@ import (
 )
 
 const createTask = `-- name: CreateTask :one
-INSERT INTO tasks (owner_id, title, description, status)
-VALUES ($1, $2, $3, $4)
+INSERT INTO tasks (id, owner_id, title, description, status)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING id, owner_id, title, description, status, created_at, updated_at
 `
 
 type CreateTaskParams struct {
+	ID          uuid.UUID
 	OwnerID     string
 	Title       string
 	Description string
@@ -26,6 +27,7 @@ type CreateTaskParams struct {
 
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error) {
 	row := q.db.QueryRow(ctx, createTask,
+		arg.ID,
 		arg.OwnerID,
 		arg.Title,
 		arg.Description,

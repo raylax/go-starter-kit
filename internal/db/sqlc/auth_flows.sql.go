@@ -214,41 +214,6 @@ func (q *Queries) GetFlow(ctx context.Context, id uuid.UUID) (AuthFlow, error) {
 	return i, err
 }
 
-const lockFlow = `-- name: LockFlow :one
-SELECT id, purpose, token_hash, provider_id, config_version, user_id, session_id, auth_version, account_id, account_version, operation, target, reauthentication_id, claimed_by, state_hash, protocol_state, verified_namespace, verified_subject, verified_name, authenticated_at, status, created_at, expires_at FROM auth_flows WHERE id = $1 AND expires_at > now() FOR UPDATE
-`
-
-func (q *Queries) LockFlow(ctx context.Context, id uuid.UUID) (AuthFlow, error) {
-	row := q.db.QueryRow(ctx, lockFlow, id)
-	var i AuthFlow
-	err := row.Scan(
-		&i.ID,
-		&i.Purpose,
-		&i.TokenHash,
-		&i.ProviderID,
-		&i.ConfigVersion,
-		&i.UserID,
-		&i.SessionID,
-		&i.AuthVersion,
-		&i.AccountID,
-		&i.AccountVersion,
-		&i.Operation,
-		&i.Target,
-		&i.ReauthenticationID,
-		&i.ClaimedBy,
-		&i.StateHash,
-		&i.ProtocolState,
-		&i.VerifiedNamespace,
-		&i.VerifiedSubject,
-		&i.VerifiedName,
-		&i.AuthenticatedAt,
-		&i.Status,
-		&i.CreatedAt,
-		&i.ExpiresAt,
-	)
-	return i, err
-}
-
 const verifyFlow = `-- name: VerifyFlow :execrows
 UPDATE auth_flows SET status = $2, verified_namespace = $3, verified_subject = $4, verified_name = $5,
  authenticated_at = $6, protocol_state = NULL

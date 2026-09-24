@@ -9,11 +9,12 @@ import (
 )
 
 // ProtectedOperations 为业务模块声明统一的认证、请求限制和错误契约。
-func ProtectedOperations(tag string, extraErrors ...int) func(string, string, string, string) huma.Operation {
-	return func(id, method, path, summary string) huma.Operation {
-		statuses := append([]int{400, 401, 404, 413, 422, 500, 503, 504}, extraErrors...)
-		return huma.Operation{OperationID: id, Method: method, Path: path, Summary: summary, Tags: []string{tag},
-			Security: []map[string][]string{{"bearer": {}}}, Errors: statuses, MaxBodyBytes: 1 << 20}
+func ProtectedOperations(tag string, extraErrors ...int) func(huma.Operation) Operation {
+	return func(spec huma.Operation) Operation {
+		spec.Tags = []string{tag}
+		spec.Errors = append([]int{400, 401, 404, 413, 422, 500, 503, 504}, extraErrors...)
+		spec.MaxBodyBytes = 1 << 20
+		return NewOperation(Session, spec)
 	}
 }
 

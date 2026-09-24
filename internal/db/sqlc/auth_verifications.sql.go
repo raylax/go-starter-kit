@@ -30,11 +30,12 @@ func (q *Queries) ConsumeVerification(ctx context.Context, arg ConsumeVerificati
 }
 
 const createVerification = `-- name: CreateVerification :one
-INSERT INTO auth_verifications(user_id, purpose, token_hash, email, auth_version, session_id, reauthentication_id, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now() + $8::bigint * interval '1 second') RETURNING id, user_id, purpose, token_hash, email, auth_version, session_id, reauthentication_id, created_at, expires_at, consumed_at
+INSERT INTO auth_verifications(id, user_id, purpose, token_hash, email, auth_version, session_id, reauthentication_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + $9::bigint * interval '1 second') RETURNING id, user_id, purpose, token_hash, email, auth_version, session_id, reauthentication_id, created_at, expires_at, consumed_at
 `
 
 type CreateVerificationParams struct {
+	ID                 uuid.UUID
 	UserID             uuid.UUID
 	Purpose            string
 	TokenHash          []byte
@@ -47,6 +48,7 @@ type CreateVerificationParams struct {
 
 func (q *Queries) CreateVerification(ctx context.Context, arg CreateVerificationParams) (AuthVerification, error) {
 	row := q.db.QueryRow(ctx, createVerification,
+		arg.ID,
 		arg.UserID,
 		arg.Purpose,
 		arg.TokenHash,

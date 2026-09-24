@@ -11,7 +11,7 @@ import (
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/platform/locker"
 	"github.com/example/go-starter-kit/internal/platform/locker/postgres"
-	"github.com/example/go-starter-kit/internal/testutil"
+	"github.com/example/go-starter-kit/tests/integration/testutil"
 )
 
 func TestPostgresLockLifecycle(t *testing.T) {

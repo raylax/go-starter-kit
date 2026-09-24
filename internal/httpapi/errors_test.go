@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
@@ -97,7 +100,7 @@ func TestErrorMapping(t *testing.T) {
 func TestEndpointMapsRawBusinessError(t *testing.T) {
 	router := chi.NewRouter()
 	api := humachi.New(router, huma.DefaultConfig("test", "1"))
-	route := Endpoint(huma.Operation{OperationID: "missing", Method: http.MethodGet, Path: "/missing"}, func(_ struct{}, _ context.Context, _ *struct{}) (*struct{}, error) {
+	route := Endpoint(NewOperation(Public, huma.Operation{OperationID: "missing", Method: http.MethodGet, Path: "/missing"}), func(_ struct{}, _ context.Context, _ *struct{}) (*struct{}, error) {
 		return nil, apperror.Wrap(apperror.New(apperror.NotFound, "project not found"), errors.New("private SQL detail"))
 	})
 	route.Bind(api, struct{}{})
@@ -105,5 +108,22 @@ func TestEndpointMapsRawBusinessError(t *testing.T) {
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/missing", nil))
 	if recorder.Code != 404 || strings.Contains(recorder.Body.String(), "private SQL") || !strings.Contains(recorder.Body.String(), "project not found") {
 		t.Fatalf("路由未统一映射业务错误：%s", recorder.Body.String())
+	}
+}
+
+func TestRetryAfterComesFromBusinessError(t *testing.T) {
+	for _, delay := range []time.Duration{time.Second, 1500 * time.Millisecond, time.Minute, 15 * time.Minute} {
+		route := Endpoint(NewOperation(Public, huma.Operation{OperationID: "limited", Method: "GET", Path: "/limited"}), func(struct{}, context.Context, *struct{}) (*struct{}, error) {
+			return nil, apperror.WithRetryAfter(apperror.New(apperror.RateLimited, "limited"), delay)
+		})
+		router := chi.NewRouter()
+		api := humachi.New(router, huma.DefaultConfig("test", "1"))
+		route.Bind(api, struct{}{})
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest("GET", "/limited", nil))
+		seconds, err := strconv.Atoi(recorder.Header().Get("Retry-After"))
+		if recorder.Code != 429 || err != nil || seconds != int(math.Ceil(delay.Seconds())) {
+			t.Fatalf("等待时间映射错误: %s", recorder.Header().Get("Retry-After"))
+		}
 	}
 }

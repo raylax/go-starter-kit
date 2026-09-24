@@ -5,22 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/example/go-starter-kit/internal/authorization"
-	"net/url"
+	"log/slog"
 	"os"
 	"strings"
 
+	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/example/go-starter-kit/internal/modules/account"
 	"github.com/example/go-starter-kit/internal/platform/federation"
 	"github.com/example/go-starter-kit/internal/platform/password"
 )
 
-func newAccounts(cfg Config, database account.Database, authorizer authorization.Authorizer) (*account.Service, error) {
+// newAuthorizer 将账户权限查询适配为各业务模块共用的授权接口。
+func newAuthorizer(database account.Database) authorization.Authorizer {
+	checker := account.NewAdminChecker(database)
+	return authorization.AdminCheckFunc(checker.CheckAdmin)
+}
+
+func newAccounts(cfg Config, database account.Database, authorizer authorization.Authorizer, logger *slog.Logger) (*account.Service, error) {
 	hasher, err := password.New(4)
 	if err != nil {
 		return nil, err
 	}
-	deps := account.Dependencies{Authorizer: authorizer, Hash: hasher.Hash, Verify: hasher.Verify, ValidPassword: password.Validate}
+	deps := account.Dependencies{Authorizer: authorizer, Passwords: hasher, Logger: logger}
 	var providers []federation.Config
 	if cfg.AuthProvidersFile != "" {
 		data, e := os.ReadFile(cfg.AuthProvidersFile)
@@ -37,26 +43,13 @@ func newAccounts(cfg Config, database account.Database, authorizer authorization
 				return nil, fmt.Errorf("读取提供商客户端密钥失败")
 			}
 			p.ClientSecret = strings.TrimSpace(string(secret))
-			redirect, e := url.Parse(p.RedirectURI)
-			if e != nil || redirect.Scheme+"://"+redirect.Host != cfg.FrontendURL || redirect.Path != "/auth/callback" || redirect.RawQuery != "" {
-				return nil, fmt.Errorf("提供商回调必须是受信前端的 /auth/callback")
-			}
 		}
 	}
 	registry, e := federation.New(providers)
 	if e != nil {
 		return nil, e
 	}
-	deps.ProviderEnabled = registry.Enabled
-	deps.ProviderVersion = registry.Version
-	deps.StartProvider = func(ctx context.Context, id, state, verifier string) (string, string, error) {
-		uri, version, e := registry.Start(ctx, id, state, verifier)
-		return uri, version, mapProviderError(e)
-	}
-	deps.VerifyProvider = func(ctx context.Context, id, version, code, verifier string) (account.VerifiedIdentity, error) {
-		v, e := registry.Verify(ctx, id, version, code, verifier)
-		return account.VerifiedIdentity{Namespace: v.Namespace, Subject: v.Subject, Name: v.Name, AuthenticatedAt: v.AuthenticatedAt}, mapProviderError(e)
-	}
+	deps.Federation = federationAdapter{registry}
 	return account.NewService(database, account.Options{IdleTTL: cfg.AuthSessionIdleTTL, MaxTTL: cfg.AuthSessionMaxTTL, FrontendURL: cfg.FrontendURL}, deps)
 }
 func mapProviderError(e error) error {
@@ -64,7 +57,21 @@ func mapProviderError(e error) error {
 		return account.ErrCredentials
 	}
 	if errors.Is(e, federation.ErrUnavailable) {
-		return account.ErrUnavailable
+		return fmt.Errorf("%w: %w", account.ErrUnavailable, e)
 	}
 	return e
+}
+
+// federationAdapter 将协议错误和身份记录转换为账户模块的契约。
+type federationAdapter struct{ registry *federation.Registry }
+
+func (a federationAdapter) Enabled(id string) bool   { return a.registry.Enabled(id) }
+func (a federationAdapter) Version(id string) string { return a.registry.Version(id) }
+func (a federationAdapter) Start(ctx context.Context, id, state, verifier string) (string, string, error) {
+	uri, version, err := a.registry.Start(ctx, id, state, verifier)
+	return uri, version, mapProviderError(err)
+}
+func (a federationAdapter) Verify(ctx context.Context, id, version, code, verifier string) (account.VerifiedIdentity, error) {
+	v, err := a.registry.Verify(ctx, id, version, code, verifier)
+	return account.VerifiedIdentity{Namespace: v.Namespace, Subject: v.Subject, Name: v.Name, AuthenticatedAt: v.AuthenticatedAt}, mapProviderError(err)
 }

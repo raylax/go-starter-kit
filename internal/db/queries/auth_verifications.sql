@@ -1,6 +1,6 @@
 -- name: CreateVerification :one
-INSERT INTO auth_verifications(user_id, purpose, token_hash, email, auth_version, session_id, reauthentication_id, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, now() + sqlc.arg(ttl_seconds)::bigint * interval '1 second') RETURNING *;
+INSERT INTO auth_verifications(id, user_id, purpose, token_hash, email, auth_version, session_id, reauthentication_id, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + sqlc.arg(ttl_seconds)::bigint * interval '1 second') RETURNING *;
 
 -- name: FindVerification :one
 SELECT * FROM auth_verifications WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > now();

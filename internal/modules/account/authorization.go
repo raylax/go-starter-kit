@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// lockSelf 仅用于敏感写入，保护账号数量、凭据变更和会话撤销。
 func (s *Service) lockSelf(ctx context.Context, q *store, r Request) (sqlc.User, sqlc.UserSession, error) {
 	uid, e := uuid.Parse(r.UserID)
 	if e != nil {
@@ -32,7 +33,7 @@ func (s *Service) lockSelf(ctx context.Context, q *store, r Request) (sqlc.User,
 	return user, session, e
 }
 
-// readSelf 校验当前用户和原会话，用于不要求串行化的资料读取。
+// readSelf 校验当前用户和原会话，不保证与后续操作串行；证明消费时必须复核版本。
 func (s *Service) readSelf(ctx context.Context, q *store, r Request) (sqlc.User, sqlc.UserSession, error) {
 	uid, err := uuid.Parse(r.UserID)
 	if err != nil {

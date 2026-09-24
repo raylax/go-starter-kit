@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -56,7 +58,11 @@ func FromError(ctx context.Context, err error) error {
 		case apperror.Forbidden:
 			return huma.Error403Forbidden(business.Error())
 		case apperror.RateLimited:
-			return huma.ErrorWithHeaders(huma.Error429TooManyRequests(business.Error()), http.Header{"Retry-After": []string{"900"}})
+			response := huma.Error429TooManyRequests(business.Error())
+			if delay, ok := apperror.RetryAfter(err); ok {
+				return huma.ErrorWithHeaders(response, http.Header{"Retry-After": []string{strconv.FormatInt(int64(math.Ceil(delay.Seconds())), 10)}})
+			}
+			return response
 		case apperror.Unavailable:
 			Logger(ctx).ErrorContext(ctx, "dependency unavailable", "error", err)
 			return huma.Error503ServiceUnavailable(business.Error())

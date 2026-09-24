@@ -8,12 +8,12 @@ SELECT * FROM users WHERE id = $1;
 SELECT * FROM users WHERE id = $1 FOR UPDATE;
 
 -- name: CreatePendingUser :one
-INSERT INTO users(email, email_normalized) VALUES ($1, $2)
+INSERT INTO users(id, email, email_normalized) VALUES ($1, $2, $3)
 ON CONFLICT (email_normalized) DO UPDATE SET email_normalized = users.email_normalized
 RETURNING *;
 
 -- name: CreateFederatedUser :one
-INSERT INTO users(display_name, status) VALUES ($1, 'active') RETURNING *;
+INSERT INTO users(id, display_name, status) VALUES ($1, $2, 'active') RETURNING *;
 
 -- name: ActivateUser :one
 UPDATE users SET status = 'active', email_verified_at = now(), recovery_enabled = true, updated_at = now()

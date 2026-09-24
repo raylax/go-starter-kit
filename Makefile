@@ -54,7 +54,7 @@ test:
 	go test -race -count=1 ./...
 
 test-integration:
-	go test -race -count=1 -tags=integration ./... -timeout 5m
+	go test -race -count=1 -tags=integration ./tests/integration/... -timeout 5m
 
 vuln:
 	go tool govulncheck ./...

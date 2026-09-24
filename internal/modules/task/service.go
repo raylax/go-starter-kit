@@ -3,13 +3,15 @@ package task
 import (
 	"context"
 
-	"github.com/google/uuid"
-
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
+	"github.com/example/go-starter-kit/internal/validation"
+	"github.com/google/uuid"
 )
+
+var storageErrors = db.ErrorPolicy{Resource: "task", NotFound: ErrNotFound}
 
 type Service struct{ queries *sqlc.Queries }
 
@@ -26,7 +28,7 @@ func (s *Service) Create(ctx context.Context, owner string, input Details) (Reco
 	if err != nil {
 		return Record{}, err
 	}
-	row, err := s.queries.CreateTask(ctx, sqlc.CreateTaskParams{OwnerID: owner, Title: input.Title, Description: input.Description, Status: string(input.Status)})
+	row, err := s.queries.CreateTask(ctx, sqlc.CreateTaskParams{ID: uuid.New(), OwnerID: owner, Title: input.Title, Description: input.Description, Status: string(input.Status)})
 	return fromRow(row), db.MapError(err, storageErrors)
 }
 
@@ -76,4 +78,17 @@ func (s *Service) Delete(ctx context.Context, owner string, id uuid.UUID) error 
 		return ErrNotFound
 	}
 	return nil
+}
+
+func validate(input Details) (Details, error) {
+	title, valid := validation.RequiredText(input.Title, 200)
+	if !valid || !validation.TextWithin(input.Description, 2000) || !input.Status.Valid() {
+		return Details{}, ErrInvalid
+	}
+	input.Title = title
+	return input, nil
+}
+
+func fromRow(row sqlc.Task) Record {
+	return Record{ID: row.ID, Title: row.Title, Description: row.Description, Status: Status(row.Status), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }

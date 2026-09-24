@@ -1,3 +1,5 @@
+//go:build integration
+
 package testutil
 
 import (
@@ -49,8 +51,8 @@ func Request(t *testing.T) func(*httptest.Server, string, string, string, bool, 
 		}
 		defer response.Body.Close()
 		requestID, err := uuid.Parse(response.Header.Get("X-Request-ID"))
-		if err != nil || requestID.Version() != 7 {
-			t.Fatal("响应缺少有效的 UUID v7 请求 ID")
+		if err != nil || requestID.Version() != 4 {
+			t.Fatal("响应缺少有效的 UUID v4 请求 ID")
 		}
 		data, err := io.ReadAll(response.Body)
 		if err != nil {

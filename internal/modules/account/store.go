@@ -16,9 +16,9 @@ import (
 
 // store 在账户模块的写入入口维护字段和组合规则，SQL 仅负责持久化与并发约束。
 // 固定角色 user、初始版本 1、状态转换和恢复开关由专用写入操作构造，调用方不能任意设置。
-type store struct{ *sqlc.Queries }
+type store struct{ rawQueries *sqlc.Queries }
 
-func newStore(database sqlc.DBTX) *store { return &store{Queries: sqlc.New(database)} }
+func newStore(database sqlc.DBTX) *store { return &store{rawQueries: sqlc.New(database)} }
 
 func validBytes(value string, max int) bool {
 	return value != "" && len(value) <= max && utf8.ValidString(value) && !strings.ContainsRune(value, '\x00')
@@ -36,14 +36,15 @@ func (q *store) CreatePendingUser(ctx context.Context, p sqlc.CreatePendingUserP
 	if !validEmailPair(p.Email, p.EmailNormalized) {
 		return sqlc.User{}, ErrInvalid
 	}
-	return q.Queries.CreatePendingUser(ctx, p)
+	p.ID = uuid.New()
+	return q.rawQueries.CreatePendingUser(ctx, p)
 }
 
 func (q *store) CreateFederatedUser(ctx context.Context, name string) (sqlc.User, error) {
 	if !validation.TextWithin(name, 100) {
 		return sqlc.User{}, ErrInvalid
 	}
-	return q.Queries.CreateFederatedUser(ctx, name)
+	return q.rawQueries.CreateFederatedUser(ctx, sqlc.CreateFederatedUserParams{ID: uuid.New(), DisplayName: name})
 }
 
 func (q *store) ActivateUser(ctx context.Context, id uuid.UUID) (sqlc.User, error) {
@@ -55,28 +56,28 @@ func (q *store) ActivateUser(ctx context.Context, id uuid.UUID) (sqlc.User, erro
 	if !validEmailPair(u.Email, u.EmailNormalized) {
 		return sqlc.User{}, ErrInvalid
 	}
-	return q.Queries.ActivateUser(ctx, id)
+	return q.rawQueries.ActivateUser(ctx, id)
 }
 
 func (q *store) UpdateUserEmail(ctx context.Context, p sqlc.UpdateUserEmailParams) (sqlc.User, error) {
 	if !validEmailPair(p.Email, p.EmailNormalized) {
 		return sqlc.User{}, ErrInvalid
 	}
-	return q.Queries.UpdateUserEmail(ctx, p)
+	return q.rawQueries.UpdateUserEmail(ctx, p)
 }
 
 func (q *store) UpdateUserProfile(ctx context.Context, p sqlc.UpdateUserProfileParams) (sqlc.User, error) {
 	if !validation.TextWithin(p.DisplayName, 100) {
 		return sqlc.User{}, ErrInvalid
 	}
-	return q.Queries.UpdateUserProfile(ctx, p)
+	return q.rawQueries.UpdateUserProfile(ctx, p)
 }
 
 func (q *store) SetUserStatus(ctx context.Context, p sqlc.SetUserStatusParams) (sqlc.User, error) {
 	if !UserStatus(p.Status).Settable() {
 		return sqlc.User{}, ErrInvalid
 	}
-	return q.Queries.SetUserStatus(ctx, p)
+	return q.rawQueries.SetUserStatus(ctx, p)
 }
 
 func (q *store) CreateAccount(ctx context.Context, p sqlc.CreateAccountParams) (sqlc.Account, error) {
@@ -90,14 +91,15 @@ func (q *store) CreateAccount(ctx context.Context, p sqlc.CreateAccountParams) (
 	} else if p.ProviderNamespace == LocalNamespace || p.PasswordHash != nil {
 		return sqlc.Account{}, ErrInvalid
 	}
-	return q.Queries.CreateAccount(ctx, p)
+	p.ID = uuid.New()
+	return q.rawQueries.CreateAccount(ctx, p)
 }
 
 func (q *store) ChangePassword(ctx context.Context, p sqlc.ChangePasswordParams) (int64, error) {
 	if p.PasswordHash == nil || *p.PasswordHash == "" {
 		return 0, ErrInvalid
 	}
-	return q.Queries.ChangePassword(ctx, p)
+	return q.rawQueries.ChangePassword(ctx, p)
 }
 
 func (q *store) UpgradePasswordHash(ctx context.Context, p sqlc.UpgradePasswordHashParams) error {
@@ -111,14 +113,15 @@ func (q *store) UpgradePasswordHash(ctx context.Context, p sqlc.UpgradePasswordH
 	if a.ProviderID != CredentialProvider {
 		return ErrInvalid
 	}
-	return q.Queries.UpgradePasswordHash(ctx, p)
+	return q.rawQueries.UpgradePasswordHash(ctx, p)
 }
 
 func (q *store) CreateSession(ctx context.Context, p sqlc.CreateSessionParams) (sqlc.UserSession, error) {
 	if len(p.TokenHash) != sha256.Size || !AuthMethod(p.AuthMethod).Valid() || p.AuthVersion <= 0 || p.IdleSeconds <= 0 || p.MaxSeconds < p.IdleSeconds {
 		return sqlc.UserSession{}, ErrInvalid
 	}
-	return q.Queries.CreateSession(ctx, p)
+	p.ID = uuid.New()
+	return q.rawQueries.CreateSession(ctx, p)
 }
 
 func (q *store) CreateFlow(ctx context.Context, p sqlc.CreateFlowParams) (sqlc.AuthFlow, error) {
@@ -134,14 +137,7 @@ func (q *store) CreateFlow(ctx context.Context, p sqlc.CreateFlowParams) (sqlc.A
 	if p.AccountID != nil && p.AccountVersion <= 0 {
 		return sqlc.AuthFlow{}, ErrInvalid
 	}
-	return q.Queries.CreateFlow(ctx, p)
-}
-
-func (q *store) VerifyFlow(ctx context.Context, p sqlc.VerifyFlowParams) (int64, error) {
-	if !FlowStatus(p.Status).Verifiable() || !validBytes(p.VerifiedNamespace, 2048) || p.VerifiedNamespace == LocalNamespace || !validBytes(p.VerifiedSubject, 1024) || !validation.TextWithin(p.VerifiedName, 100) {
-		return 0, ErrInvalid
-	}
-	return q.Queries.VerifyFlow(ctx, p)
+	return q.rawQueries.CreateFlow(ctx, p)
 }
 
 func (q *store) CreateVerification(ctx context.Context, p sqlc.CreateVerificationParams) (sqlc.AuthVerification, error) {
@@ -151,14 +147,15 @@ func (q *store) CreateVerification(ctx context.Context, p sqlc.CreateVerificatio
 	if _, err := normalizeEmail(p.Email); err != nil {
 		return sqlc.AuthVerification{}, ErrInvalid
 	}
-	return q.Queries.CreateVerification(ctx, p)
+	p.ID = uuid.New()
+	return q.rawQueries.CreateVerification(ctx, p)
 }
 
-func (q *store) RateLimit(ctx context.Context, p sqlc.RateLimitParams) (int32, error) {
+func (q *store) RateLimit(ctx context.Context, p sqlc.RateLimitParams) (sqlc.RateLimitRow, error) {
 	if len(p.BucketKey) != sha256.Size || p.WindowSeconds <= 0 {
-		return 0, ErrInvalid
+		return sqlc.RateLimitRow{}, ErrInvalid
 	}
-	return q.Queries.RateLimit(ctx, p)
+	return q.rawQueries.RateLimit(ctx, p)
 }
 
 func (q *store) AppendAudit(ctx context.Context, p sqlc.AppendAuditParams) error {
@@ -176,7 +173,8 @@ func (q *store) AppendAudit(ctx context.Context, p sqlc.AppendAuditParams) error
 	if len(p.Metadata) > 8192 || json.Unmarshal(p.Metadata, &metadata) != nil || metadata == nil {
 		return ErrInvalid
 	}
-	return q.Queries.AppendAudit(ctx, p)
+	p.ID = uuid.New()
+	return q.rawQueries.AppendAudit(ctx, p)
 }
 
 // EnqueueMail 校验队列载荷，队列写入必须与账户变更共用事务。
@@ -187,7 +185,7 @@ func (q *store) EnqueueMail(ctx context.Context, p sqlc.EnqueueMailParams) error
 	if _, err := normalizeEmail(p.Recipient); err != nil {
 		return err
 	}
-	return q.Queries.EnqueueMail(ctx, p)
+	return q.rawQueries.EnqueueMail(ctx, p)
 }
 
 // enqueueSecurityNotification 在当前业务事务中写入已验证邮箱的安全通知。
@@ -195,5 +193,5 @@ func (q *store) enqueueSecurityNotification(ctx context.Context, user sqlc.User,
 	if user.Email == nil || user.EmailVerifiedAt == nil {
 		return nil
 	}
-	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.Must(uuid.NewV7()), Kind: SecurityNotificationKind, Recipient: *user.Email, Subject: "Account security notification", Body: "<p>" + html.EscapeString(body) + "</p>", ExpiresAt: time.Now().Add(24 * time.Hour)})
+	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: SecurityNotificationKind, Recipient: *user.Email, Subject: "Account security notification", Body: "<p>" + html.EscapeString(body) + "</p>", ExpiresAt: time.Now().Add(24 * time.Hour)})
 }

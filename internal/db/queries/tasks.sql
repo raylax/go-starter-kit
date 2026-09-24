@@ -1,6 +1,6 @@
 -- name: CreateTask :one
-INSERT INTO tasks (owner_id, title, description, status)
-VALUES ($1, $2, $3, $4)
+INSERT INTO tasks (id, owner_id, title, description, status)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetTask :one

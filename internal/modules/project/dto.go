@@ -36,13 +36,9 @@ type UpdateInput struct {
 type ListInput struct {
 	httpapi.PageQuery
 }
-type ProjectOutput = httpapi.ItemOutput[Project]
-type CreatedOutput = httpapi.CreatedOutput[Project]
 
 // 具名分页 DTO 为公开 schema 提供稳定的资源名称。
 type ProjectListResponse httpapi.Page[Project]
-
-type ListOutput = httpapi.ItemOutput[ProjectListResponse]
 
 // toDTO 保持业务模型与 DTO 独立，结构不再匹配时会在编译期报错。
 func toDTO(item Record) Project {

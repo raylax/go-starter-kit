@@ -7,7 +7,8 @@ import (
 	"fmt"
 	app "github.com/example/go-starter-kit/internal/app/api"
 	"github.com/example/go-starter-kit/internal/identity"
-	"github.com/example/go-starter-kit/internal/testutil"
+	"github.com/example/go-starter-kit/tests/integration/testutil"
+	"github.com/google/uuid"
 	"io"
 	"log/slog"
 	"net"
@@ -25,12 +26,12 @@ func TestServerLifecycle(t *testing.T) {
 	addr := listener.Addr().String()
 	_ = listener.Close()
 	token, digest := identity.NewToken("tk_")
-	if _, err := pool.Exec(t.Context(), `WITH u AS (INSERT INTO users(status) VALUES('active') RETURNING id,auth_version)
- INSERT INTO user_sessions(user_id,token_hash,auth_method,auth_source_id,auth_version,idle_expires_at,absolute_expires_at)
- SELECT id,$1,'password',uuidv7(),auth_version,now()+interval '30 minutes',now()+interval '24 hours' FROM u`, digest); err != nil {
+	if _, err := pool.Exec(t.Context(), `WITH u AS (INSERT INTO users(id,status) VALUES($2,'active') RETURNING id,auth_version)
+ INSERT INTO user_sessions(id,user_id,token_hash,auth_method,auth_source_id,auth_version,idle_expires_at,absolute_expires_at)
+ SELECT $3,id,$1,'password',$4,auth_version,now()+interval '30 minutes',now()+interval '24 hours' FROM u`, digest, uuid.New(), uuid.New(), uuid.New()); err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range map[string]string{"APP_ENV": "test", "DATABASE_URL": databaseURL, "HTTP_ADDR": addr, "SHUTDOWN_TIMEOUT": "3s", "REQUEST_TIMEOUT": "5s", "OTEL_ENABLED": "false", "AUTH_PROVIDERS_FILE": "", "FRONTEND_URL": "https://web.example", "ALLOWED_ORIGINS": "https://web.example"} {
+	for k, v := range map[string]string{"APP_ENV": "test", "DATABASE_URL": databaseURL, "HTTP_ADDR": addr, "SHUTDOWN_TIMEOUT": "3s", "REQUEST_TIMEOUT": "5s", "OTEL_ENABLED": "false", "AUTH_PROVIDERS_FILE": "", "FRONTEND_URL": "https://web.example"} {
 		t.Setenv(k, v)
 	}
 	cfg, err := app.Load()

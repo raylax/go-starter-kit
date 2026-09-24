@@ -1,15 +1,15 @@
 //go:build integration
 
-package account
+package account_test
 
 import (
+	"github.com/example/go-starter-kit/internal/modules/account"
 	"testing"
 	"time"
 )
 
 func TestMinimumIdleTTLStillRenews(t *testing.T) {
-	f := newFixture(t)
-	f.s.options.IdleTTL = time.Minute
+	f := newFixture(t, func(options *account.Options) { options.IdleTTL = time.Minute })
 	session := f.register("renewal@example.com")
 	// 模拟持续活跃会话达到半个闲置窗口，不依赖真实等待。
 	if _, err := f.pool.Exec(t.Context(), `UPDATE user_sessions SET last_seen_at=now()-interval '31 seconds',idle_expires_at=now()+interval '29 seconds' WHERE id=$1`, session.SessionID); err != nil {

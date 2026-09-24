@@ -20,6 +20,15 @@ import (
 var ErrProof = errors.New("第三方证明无效")
 var ErrUnavailable = errors.New("第三方服务不可用")
 
+// Protocol 是当前支持的第三方身份协议；提供商 ID 仍由配置扩展。
+type Protocol string
+
+const (
+	ProtocolGitHub Protocol = "github"
+)
+
+func (p Protocol) Valid() bool { return p == ProtocolGitHub }
+
 type Config struct {
 	ID               string   `json:"id"`
 	Protocol         Protocol `json:"protocol"`
@@ -100,10 +109,7 @@ func (r *Registry) Verify(ctx context.Context, id, version, code, verifier strin
 	}
 	token, e := c.Exchange(r.context(ctx), code, oauth2.VerifierOption(verifier))
 	if e != nil {
-		if ctx.Err() != nil {
-			return Verified{}, ctx.Err()
-		}
-		return Verified{}, ErrProof
+		return Verified{}, exchangeError(ctx, e)
 	}
 	req, e := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
 	if e != nil {
@@ -113,18 +119,52 @@ func (r *Registry) Verify(ctx context.Context, id, version, code, verifier strin
 	req.Header.Set("Accept", "application/vnd.github+json")
 	res, e := r.client.Do(req)
 	if e != nil {
-		return Verified{}, ErrUnavailable
+		return Verified{}, dependencyError(ctx, e)
 	}
 	defer res.Body.Close()
-	if res.StatusCode != 200 {
+	if res.StatusCode == http.StatusUnauthorized {
 		return Verified{}, ErrProof
+	}
+	if res.StatusCode != http.StatusOK {
+		return Verified{}, ErrUnavailable
 	}
 	var user struct {
 		ID    int64  `json:"id"`
 		Login string `json:"login"`
 	}
-	if json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&user) != nil || user.ID <= 0 {
-		return Verified{}, ErrProof
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&user); err != nil {
+		return Verified{}, dependencyError(ctx, err)
+	}
+	if user.ID <= 0 {
+		return Verified{}, ErrUnavailable
 	}
 	return Verified{Namespace: "https://api.github.com", Subject: strconv.FormatInt(user.ID, 10), Name: user.Login}, nil
+}
+
+// unavailableCause 保留底层链用于分类，日志文本始终使用固定脱敏提示。
+type unavailableCause struct{ cause error }
+
+func (e *unavailableCause) Error() string   { return ErrUnavailable.Error() }
+func (e *unavailableCause) Unwrap() []error { return []error{ErrUnavailable, e.cause} }
+func dependencyError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return &unavailableCause{cause: err}
+}
+func exchangeError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var rejected *oauth2.RetrieveError
+	if errors.As(err, &rejected) {
+		if rejected.Response != nil && (rejected.Response.StatusCode >= 500 || rejected.Response.StatusCode == http.StatusTooManyRequests) {
+			return dependencyError(ctx, err)
+		}
+		switch rejected.ErrorCode {
+		case "invalid_grant", "bad_verification_code", "access_denied":
+			return ErrProof
+		}
+	}
+	return dependencyError(ctx, err)
 }

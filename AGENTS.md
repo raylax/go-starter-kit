@@ -10,21 +10,22 @@
 - 数据库错误使用 `db.MapError`，模块声明 `ErrorPolicy`；唯一约束必须按名称匹配，未知约束保持内部异常。
 - 分页规则复用 `pagination.Params`、`Build` 和 `Map`；HTTP 分页字段复用 `httpapi.PageQuery`、`Page` 和 `PageFrom`。模块列表响应使用具名类型提供稳定的 OpenAPI schema 名称。
 - 文本基础校验使用 `internal/validation/`，具体字段上限和状态规则由业务模块决定；认证参数复用 `identity` 校验，所有环境使用一致的认证规则。保留各服务入口的所有者检查；字段长度、枚举和字段组合规则由 DTO 与业务代码校验，不使用数据库 CHECK。数据库保留主键、外键、唯一约束及 NOT NULL。账户写入通过模块内 store 执行校验，禁止绕过该入口直接调用生成写入方法。
-- 新生成的 UUID 使用 v7：数据库默认值使用 PostgreSQL 18 的 `uuidv7()`，Go 使用 `uuid.NewV7()`；不改写已有记录 ID，历史迁移和回滚脚本保留原生成规则。
+- UUID 由 Go 代码生成并显式写入，默认使用 v4（`uuid.New()`），数据库 UUID 列不设置生成默认值，不依赖数据库的 UUID 生成功能。生成策略由对应资源的创建代码维护，后续可按表独立切换 v7；不改写已有记录 ID。
 - OpenAPI schema 使用 PascalCase：资源模型为 `<资源>`，请求正文为 `<资源><动作>Request`，列表响应为 `<资源>ListResponse`；公共响应为 `HealthResponse`、`ErrorResponse`，错误明细为 `ErrorDetail`。公开正文使用具名 DTO，不使用匿名正文生成的 `InputBody`、`OutputBody` 或无资源前缀的 `WriteBody`；修改源码后重新生成契约，禁止手改 JSON。
 - API DTO 与业务模型、生成的数据库类型分别维护。所有业务资源的读写 SQL 必须按已认证的 subject 限定作用域。
 - 迁移集中放在 `internal/db/migrations/`，全局有序。修改表结构时新增迁移，不修改已应用到部署数据库的历史迁移。
+- 仅为不可接受的并发后果加显式锁；低概率且可接受失败、重试或证明失效的竞争不增加锁与协调层。优先使用唯一约束、条件更新和版本复核；跨表安全不变量、账号数量限制和任务独占领取仍需保护，事务原子性不因删锁而取消。
 - 修改 SQL、迁移或 API 类型后运行 `make generate`。禁止手改 `internal/db/sqlc/` 或 `api/openapi.json`；生成过程包含 `any` 规范化。
 - 管理能力归属对应业务模块：管理业务、HTTP 映射和专用 DTO 分别放在 `admin.go`、`admin_http.go`、`admin_dto.go`，通过 `AdminRoutes()` 由应用层单独装配。管理入口通过注入的 `authorization.Authorizer` 检查权限；跨领域管理操作由应用层组合。将来需要独立管理进程时，使用 `internal/app/admin` 装配已有业务模块。
 - 路由契约通过 `internal/app/api/routes.go` 的统一清单装配。离线导出不能初始化数据库、认证客户端或加载运行配置，也不能用空依赖调用运行时构造函数。
 - 代码变更运行 `make check`；数据库、API、认证、迁移或生命周期变更还须运行 `make test-integration`。需要 Docker 的验收不能因基础设施不可用而静默跳过。
-- 业务集成测试随模块放置，应用及生命周期测试放在 `tests/integration/`，公共夹具放在 `internal/testutil/`，仅供测试使用。
+- 所有集成测试统一放在 `tests/integration/`，按业务与基础设施分子目录；应用装配和生命周期场景放在该目录根部。共享夹具位于 `tests/integration/testutil/`，仅供测试使用。业务目录只保留单元测试；集成测试通过公开入口和依赖注入验证行为，不为测试暴露业务内部实现。
 - 不记录或提交凭据、Bearer 令牌和真实用户数据。`.env` 仅供本地使用并已忽略。
 
 ## 用户体系约定
 
 - 会话令牌以 `tk_` 开头，流程与邮件挑战分别使用 `flow_`、`verify_`；认证表仅保存摘要；邮件挑战原文可短期存在 outbox 正文，投递终态清除。Authorization 专用于会话；验证及 OAuth 回调的令牌通过正文 `token` 传入，令牌响应也统一使用 `token`。记录引用保留 `session_id`、`flow_id` 等语义名称；不添加 Cookie、刷新令牌或本地 JWT。
-- 当前第三方登录仅支持 GitHub OAuth，不引入 OIDC、JWT 验签、JWKS 或 nonce；OAuth 保留 state 与 PKCE。认证限速键使用类别与对象的 SHA-256 摘要，无独立密钥配置。通用前端配置使用 `FRONTEND_URL`、`ALLOWED_ORIGINS`。
+- 当前第三方登录仅支持 GitHub OAuth，不引入 OIDC、JWT 验签、JWKS 或 nonce；OAuth 保留 state 与 PKCE。认证限速键使用类别与对象的 SHA-256 摘要，无独立密钥配置。`FRONTEND_URL` 仅用于生成邮件验证链接；应用不配置 Origin 白名单或 CORS，跨域响应头由部署网关处理。OAuth 回调地址由提供商配置独立声明。
 - User 是业务主体，Account 是可撤销登录方式；第三方身份不按邮箱自动合并。账户模块的业务实现可依赖 `identity` 的令牌能力，不反向依赖 `httpapi` 或其他模块。
 - 登录/验证入口可按凭据摘要定位主体；普通账户操作以当前用户和原会话限定范围；管理员操作在业务事务开始前通过公共授权接口重新检查用户角色与原会话，使用普通查询。
 - `audit_events` 是各模块可追加的共享审计表。成功业务变更和审计同事务；失败事件在回滚后另写。查询限定归属或管理员权限，禁止以 metadata 隐藏授权条件；运行账号不得修改、删除审计。
@@ -42,6 +43,6 @@
 
 - API 与 Worker 在 `internal/app` 使用 Fx 装配依赖和生命周期，共享基础设施位于 `app/appfx`。业务模块不导入 Fx；资源在 OnStart 初始化，服务停止后才关闭数据库和遥测。构造函数不执行依赖数据库在线状态的查询；migrate/openapi 不构建 Fx 应用。
 
-- 不提供 Development 认证模式、固定演示令牌或环境相关的安全豁免。前端 origin 与 OAuth 端点统一使用 HTTPS。APP_ENV 仅为环境标识，不改变认证规则；固定身份夹具仅允许位于测试辅助代码。
+- 不提供 Development 认证模式、固定演示令牌或环境相关的安全豁免。OAuth 端点使用 HTTPS。APP_ENV 仅为环境标识，不改变认证规则；固定身份夹具仅允许位于测试辅助代码。
 
 - `internal/authorization` 只定义 Subject 与 Authorizer 契约，不依赖业务模块。账户模块提供独立 AdminChecker，应用层适配并通过 Fx 注入，避免账户 Service 与授权器循环依赖。需要管理功能的其他模块只依赖授权接口，禁止直接依赖 account；权限查询与业务事务不保证串行一致性。

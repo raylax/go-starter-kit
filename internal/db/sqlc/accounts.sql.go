@@ -31,11 +31,12 @@ func (q *Queries) ChangePassword(ctx context.Context, arg ChangePasswordParams) 
 }
 
 const createAccount = `-- name: CreateAccount :one
-INSERT INTO accounts(user_id, provider_id, provider_account_id, provider_namespace, password_hash)
-VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, provider_id, provider_account_id, provider_namespace, password_hash, version, created_at, updated_at, last_used_at, revoked_at
+INSERT INTO accounts(id, user_id, provider_id, provider_account_id, provider_namespace, password_hash)
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, user_id, provider_id, provider_account_id, provider_namespace, password_hash, version, created_at, updated_at, last_used_at, revoked_at
 `
 
 type CreateAccountParams struct {
+	ID                uuid.UUID
 	UserID            uuid.UUID
 	ProviderID        string
 	ProviderAccountID string
@@ -45,6 +46,7 @@ type CreateAccountParams struct {
 
 func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error) {
 	row := q.db.QueryRow(ctx, createAccount,
+		arg.ID,
 		arg.UserID,
 		arg.ProviderID,
 		arg.ProviderAccountID,

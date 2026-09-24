@@ -1,6 +1,6 @@
 -- name: CreateProject :one
-INSERT INTO projects (owner_id, name, description)
-VALUES ($1, $2, $3)
+INSERT INTO projects (id, owner_id, name, description)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetProject :one

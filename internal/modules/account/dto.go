@@ -1,11 +1,12 @@
 package account
 
 import (
+	"reflect"
+	"time"
+
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/google/uuid"
-	"reflect"
-	"time"
 )
 
 type User struct {
@@ -237,4 +238,42 @@ func profileDTO(p Profile) UserProfile {
 		accounts = append(accounts, Account(a))
 	}
 	return UserProfile{User: User(p.User), Accounts: accounts, SessionID: p.SessionID}
+}
+
+func sessionOutput(value SessionCredentials) *SessionOutput {
+	return &SessionOutput{CacheControl: "no-store", Body: sessionDTO(value)}
+}
+
+func flowOutput(value FlowResult) *FlowOutput {
+	return &FlowOutput{CacheControl: "no-store", Body: flowDTO(value)}
+}
+
+func userDTO(value UserRecord) User { return User(value) }
+
+func sessionRecordDTO(value SessionRecord) Session { return Session(value) }
+
+func callbackOutput(v AuthenticationResult) *CallbackOutput {
+	body := AuthCallbackResponse{Result: v.Result}
+	switch v.Result {
+	case ResultSession:
+		session := sessionDTO(v.Session)
+		body.Session = &session
+	case ResultReauthenticated:
+		body.ReauthenticationID = &v.ReauthenticationID
+	case ResultLinkPending:
+		body.FlowID = &v.Flow.ID
+		body.Provider = &v.Provider
+		body.Name = &v.Name
+	}
+	return &CallbackOutput{CacheControl: "no-store", Body: body}
+}
+func reauthenticateOutput(v AuthenticationResult) *ReauthenticateOutput {
+	body := UserReauthenticateResponse{Result: v.Result}
+	if v.Result == ResultRedirect {
+		f := flowDTO(v.Flow)
+		body.Flow = &f
+	} else {
+		body.ReauthenticationID = &v.ReauthenticationID
+	}
+	return &ReauthenticateOutput{CacheControl: "no-store", Body: body}
 }

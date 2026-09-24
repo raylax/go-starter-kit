@@ -14,9 +14,6 @@ func text(p *string) string {
 func userRecord(u sqlc.User) UserRecord {
 	return UserRecord{ID: u.ID, DisplayName: u.DisplayName, Email: u.Email, EmailVerified: u.EmailVerifiedAt != nil, Status: UserStatus(u.Status), Role: UserRole(u.Role), CreatedAt: u.CreatedAt}
 }
-func (s *Service) accountEnabled(a sqlc.Account) bool {
-	return a.ProviderID == CredentialProvider || (s.deps.ProviderEnabled != nil && s.deps.ProviderEnabled(a.ProviderID))
-}
 func (s *Service) accountRecords(rows []sqlc.Account) []AccountRecord {
 	out := make([]AccountRecord, 0, len(rows))
 	for _, a := range rows {

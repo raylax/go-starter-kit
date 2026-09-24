@@ -32,6 +32,8 @@ func New(concurrency int) (*Hasher, error) {
 	return h, nil
 }
 
+func (h *Hasher) Validate(value string) bool { return Validate(value) }
+
 func Validate(value string) bool {
 	n := utf8.RuneCountInString(value)
 	return utf8.ValidString(value) && n >= 15 && n <= 128 && len(value) <= maxPasswordBytes

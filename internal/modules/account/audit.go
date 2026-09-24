@@ -6,7 +6,6 @@ import (
 	"errors"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/google/uuid"
-	"log/slog"
 	"time"
 )
 
@@ -58,6 +57,6 @@ func (s *Service) recordFailure(ctx context.Context, r Request, action string, e
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	if e := audit(auditCtx, s.queries, r, action, outcome, "user", "", r.UserID, reason, nil); e != nil {
-		slog.ErrorContext(ctx, "审计写入失败", "action", action)
+		s.deps.Logger.ErrorContext(ctx, "审计写入失败", "action", action, "request_id", r.RequestID)
 	}
 }

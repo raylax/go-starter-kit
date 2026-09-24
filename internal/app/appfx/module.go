@@ -5,22 +5,12 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/platform/telemetry"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/fx"
 )
-
-type Config struct {
-	DatabaseURL     string
-	DBMaxConns      int32
-	LogLevel        slog.Level
-	OTelEnabled     bool
-	OTelServiceName string
-	ShutdownTimeout time.Duration
-}
 
 // Database 在启动钩子中打开，只能由更晚启动的服务使用。
 // 业务模块接收数据库接口，不依赖此生命周期适配器。
@@ -33,7 +23,6 @@ var Module = fx.Module("infrastructure",
 
 func newLogger(cfg Config) *slog.Logger {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
-	slog.SetDefault(logger)
 	return logger
 }
 

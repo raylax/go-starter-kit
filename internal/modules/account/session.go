@@ -71,7 +71,7 @@ func (s *Service) Login(ctx context.Context, r Request, email, password string) 
 	if ae != nil && !errors.Is(ae, pgx.ErrNoRows) {
 		return SessionCredentials{}, db.MapError(ae, storageErrors)
 	}
-	valid, upgrade, e := s.deps.Verify(ctx, text(a.PasswordHash), password)
+	valid, upgrade, e := s.deps.Passwords.Verify(ctx, text(a.PasswordHash), password)
 	if e != nil {
 		return SessionCredentials{}, e
 	}
@@ -80,7 +80,7 @@ func (s *Service) Login(ctx context.Context, r Request, email, password string) 
 	}
 	var newHash string
 	if upgrade {
-		newHash, e = s.deps.Hash(ctx, password)
+		newHash, e = s.deps.Passwords.Hash(ctx, password)
 		if e != nil {
 			return SessionCredentials{}, e
 		}
@@ -116,21 +116,15 @@ func (s *Service) Sessions(ctx context.Context, r Request, p pagination.Params) 
 	if p.Validate() != nil {
 		return pagination.Result[SessionRecord]{}, ErrInvalid
 	}
-	var result pagination.Result[SessionRecord]
-	e := db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
-		q := newStore(tx)
-		u, _, e := s.lockSelf(ctx, q, r)
-		if e != nil {
-			return e
-		}
-		rows, e := q.ListSessions(ctx, sqlc.ListSessionsParams{UserID: u.ID, Limit: p.FetchLimit(), Offset: p.Offset})
-		if e != nil {
-			return e
-		}
-		result, e = pagination.Build(rows, p, sessionRecord)
-		return e
-	})
-	return result, e
+	u, _, err := s.readSelf(ctx, s.queries, r)
+	if err != nil {
+		return pagination.Result[SessionRecord]{}, db.MapError(err, storageErrors)
+	}
+	rows, err := s.queries.ListSessions(ctx, sqlc.ListSessionsParams{UserID: u.ID, Limit: p.FetchLimit(), Offset: p.Offset})
+	if err != nil {
+		return pagination.Result[SessionRecord]{}, db.MapError(err, storageErrors)
+	}
+	return pagination.Build(rows, p, sessionRecord)
 }
 func (s *Service) RevokeSession(ctx context.Context, r Request, id uuid.UUID, all bool) error {
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {

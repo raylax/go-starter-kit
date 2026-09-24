@@ -15,10 +15,10 @@ func TestServiceRejectsMissingOwnerBeforeDatabaseAccess(t *testing.T) {
 	service := NewService(nil)
 	input := Details{Title: "task", Status: Todo}
 	_, createErr := service.Create(t.Context(), "", input)
-	_, getErr := service.Get(t.Context(), "", uuid.Must(uuid.NewV7()))
+	_, getErr := service.Get(t.Context(), "", uuid.New())
 	_, listErr := service.List(t.Context(), "", "", pagination.Params{Limit: 20})
-	_, updateErr := service.Update(t.Context(), "", uuid.Must(uuid.NewV7()), input)
-	deleteErr := service.Delete(t.Context(), "", uuid.Must(uuid.NewV7()))
+	_, updateErr := service.Update(t.Context(), "", uuid.New(), input)
+	deleteErr := service.Delete(t.Context(), "", uuid.New())
 	for _, err := range []error{createErr, getErr, listErr, updateErr, deleteErr} {
 		if !errors.Is(err, apperror.ErrUnauthenticated) {
 			t.Fatalf("unexpected error: %v", err)
@@ -47,7 +47,7 @@ func TestTaskValidation(t *testing.T) {
 		}
 	}
 	service := NewService(nil)
-	if _, err := service.Update(t.Context(), "alice", uuid.Must(uuid.NewV7()), Details{Title: "title"}); !errors.Is(err, ErrInvalid) {
+	if _, err := service.Update(t.Context(), "alice", uuid.New(), Details{Title: "title"}); !errors.Is(err, ErrInvalid) {
 		t.Fatal("update must require an explicit status")
 	}
 	for _, filter := range []struct {

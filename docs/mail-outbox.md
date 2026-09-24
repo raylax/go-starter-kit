@@ -4,7 +4,7 @@
 
 `mail_outbox` 是共享基础表，业务模块在自身事务内写入；队列写入失败则整个业务事务回滚。账户模块只准备业务邮件并入队，不依赖发送器。`modules/mailoutbox` 管理消费状态，`app/worker` 装配数据库和 `platform/mail.Sender`，后续供应商实现沿用这个接口。
 
-空数据库先应用完整基线 `00001_init.sql`，再启动 API 和 Worker。Worker 必须设置 `DATABASE_URL`，`DB_MAX_CONNS` 默认 5，`MAIL_POLL_INTERVAL` 默认 2s。当前发送器为日志 mock，返回成功后队列标记 sent；这里的 sent 表示发送器接受请求，不代表真实收件箱投递。
+空数据库先应用完整基线 `00001_init.sql`，再启动 API 和 Worker。Worker 必须设置 `DATABASE_URL`，`DB_MAX_CONNS` 默认 5，`MAIL_POLL_INTERVAL` 默认 1s。当前发送器为日志 mock，返回成功后队列标记 sent；这里的 sent 表示发送器接受请求，不代表真实收件箱投递。
 
 ## 领取与重试
 

@@ -3,7 +3,3 @@
 coverage.out
 *.test
 .DS_Store
-
-
-# 本地认证密钥与提供商配置
-.secrets/

@@ -16,14 +16,12 @@ import (
 type Config struct {
 	RequestTimeout time.Duration
 	DocsEnabled    bool
-	AllowedOrigins []string
 }
 
 // New 创建基础路由器，具体业务路由由应用装配层注册。
 func New(cfg Config, logger *slog.Logger) (http.Handler, huma.API) {
 	router := chi.NewRouter()
 	router.Use(Requests(logger, cfg.RequestTimeout))
-	router.Use(CORS(cfg.AllowedOrigins))
 	router.NotFound(func(w http.ResponseWriter, _ *http.Request) { Problem(w, http.StatusNotFound, "route not found") })
 	router.MethodNotAllowed(MethodNotAllowed(router))
 	apiConfig := huma.DefaultConfig("Go Starter Kit API", "1.0.0")

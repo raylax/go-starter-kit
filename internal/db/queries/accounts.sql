@@ -11,8 +11,8 @@ SELECT * FROM accounts WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL;
 SELECT * FROM accounts WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at, id;
 
 -- name: CreateAccount :one
-INSERT INTO accounts(user_id, provider_id, provider_account_id, provider_namespace, password_hash)
-VALUES ($1, $2, $3, $4, $5) RETURNING *;
+INSERT INTO accounts(id, user_id, provider_id, provider_account_id, provider_namespace, password_hash)
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;
 
 -- name: ChangePassword :execrows
 UPDATE accounts SET password_hash = $3, version = version + 1, updated_at = now()

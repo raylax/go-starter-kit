@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
@@ -11,13 +12,57 @@ import (
 
 func Routes() []httpapi.Route[*Service] {
 	op := httpapi.ProtectedOperations("Projects", http.StatusConflict)
-	create := op("create-project", http.MethodPost, "/v1/projects", "Create a project")
 	return []httpapi.Route[*Service]{
-		httpapi.CreatedEndpoint(create, createProject, toDTO, func(item Project) string { return "/v1/projects/" + item.ID.String() }),
-		httpapi.ItemEndpoint(op("get-project", http.MethodGet, "/v1/projects/{id}", "Get an owned project"), getProject, toDTO),
-		httpapi.PageEndpoint[ProjectListResponse](op("list-projects", http.MethodGet, "/v1/projects", "List owned projects"), listProjects, toDTO),
-		httpapi.ItemEndpoint(op("update-project", http.MethodPut, "/v1/projects/{id}", "Replace an owned project"), updateProject, toDTO),
-		httpapi.NoContentEndpoint(op("delete-project", http.MethodDelete, "/v1/projects/{id}", "Delete an owned project"), deleteProject),
+		httpapi.CreatedEndpoint(
+			op(huma.Operation{
+				OperationID: "create-project",
+				Method:      http.MethodPost,
+				Path:        "/v1/projects",
+				Summary:     "Create a project",
+			}),
+			createProject,
+			toDTO,
+			projectLocation,
+		),
+		httpapi.ItemEndpoint(
+			op(huma.Operation{
+				OperationID: "get-project",
+				Method:      http.MethodGet,
+				Path:        "/v1/projects/{id}",
+				Summary:     "Get an owned project",
+			}),
+			getProject,
+			toDTO,
+		),
+		httpapi.PageEndpoint[ProjectListResponse](
+			op(huma.Operation{
+				OperationID: "list-projects",
+				Method:      http.MethodGet,
+				Path:        "/v1/projects",
+				Summary:     "List owned projects",
+			}),
+			listProjects,
+			toDTO,
+		),
+		httpapi.ItemEndpoint(
+			op(huma.Operation{
+				OperationID: "update-project",
+				Method:      http.MethodPut,
+				Path:        "/v1/projects/{id}",
+				Summary:     "Replace an owned project",
+			}),
+			updateProject,
+			toDTO,
+		),
+		httpapi.NoContentEndpoint(
+			op(huma.Operation{
+				OperationID: "delete-project",
+				Method:      http.MethodDelete,
+				Path:        "/v1/projects/{id}",
+				Summary:     "Delete an owned project",
+			}),
+			deleteProject,
+		),
 	}
 }
 
@@ -40,3 +85,5 @@ func updateProject(service *Service, ctx context.Context, input *UpdateInput) (R
 func deleteProject(service *Service, ctx context.Context, input *IDInput) error {
 	return service.Delete(ctx, identity.Subject(ctx), input.ID)
 }
+
+func projectLocation(item Project) string { return "/v1/projects/" + item.ID.String() }

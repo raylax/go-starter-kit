@@ -14,10 +14,10 @@ import (
 func TestServiceRejectsMissingOwnerBeforeDatabaseAccess(t *testing.T) {
 	service := NewService(nil)
 	_, createErr := service.Create(t.Context(), "", "project", "")
-	_, getErr := service.Get(t.Context(), "", uuid.Must(uuid.NewV7()))
+	_, getErr := service.Get(t.Context(), "", uuid.New())
 	_, listErr := service.List(t.Context(), "", pagination.Params{Limit: 20})
-	_, updateErr := service.Update(t.Context(), "", uuid.Must(uuid.NewV7()), "project", "")
-	deleteErr := service.Delete(t.Context(), "", uuid.Must(uuid.NewV7()))
+	_, updateErr := service.Update(t.Context(), "", uuid.New(), "project", "")
+	deleteErr := service.Delete(t.Context(), "", uuid.New())
 	for _, err := range []error{createErr, getErr, listErr, updateErr, deleteErr} {
 		if !errors.Is(err, apperror.ErrUnauthenticated) {
 			t.Fatalf("unexpected error: %v", err)

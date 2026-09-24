@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"time"
+
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"time"
 )
 
 // ProcessOne 原子领取一封邮件，在数据库事务外发送。租约标识防止过期消费者覆盖新状态。
@@ -17,7 +19,7 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if err := s.queries.ExpireMail(queryCtx); err != nil {
 		return false, err
 	}
-	lease, err := uuid.NewV7()
+	lease, err := uuid.NewRandom()
 	if err != nil {
 		return false, err
 	}
@@ -75,4 +77,15 @@ func (s *Service) finishDelivery(ctx context.Context, row sqlc.MailOutbox, lease
 		return fmt.Errorf("邮件领取租约已失效")
 	}
 	return nil
+}
+
+// retryDelaySeconds 按领取次数退避，抖动避免故障恢复时集中重试。
+func retryDelaySeconds(attempt int32) int64 {
+	if attempt < 1 {
+		attempt = 1
+	}
+	if attempt > 5 {
+		attempt = 5
+	}
+	return int64(15*(1<<uint(attempt-1))) + int64(rand.IntN(10))
 }

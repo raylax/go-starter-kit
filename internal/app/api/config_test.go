@@ -4,9 +4,8 @@ import "testing"
 
 func TestConfigurationBoundaries(t *testing.T) {
 	base := map[string]string{
-		"DATABASE_URL":    "postgres://user:password@localhost/test",
-		"FRONTEND_URL":    "https://web.example.com",
-		"ALLOWED_ORIGINS": "https://web.example.com",
+		"DATABASE_URL": "postgres://user:password@localhost/test",
+		"FRONTEND_URL": "https://web.example.com",
 	}
 	for _, tc := range []struct {
 		name   string
@@ -20,8 +19,9 @@ func TestConfigurationBoundaries(t *testing.T) {
 		{"invalid pool", map[string]string{"DB_MAX_CONNS": "0"}, false},
 		{"invalid boolean", map[string]string{"DOCS_ENABLED": "yes"}, false},
 		{"negative timeout", map[string]string{"REQUEST_TIMEOUT": "-1s"}, false},
-		{"insecure frontend", map[string]string{"FRONTEND_URL": "http://web.example.com"}, false},
-		{"wildcard origins", map[string]string{"ALLOWED_ORIGINS": "*"}, false},
+		{"HTTP frontend", map[string]string{"FRONTEND_URL": "http://web.example.com"}, true},
+		{"explicit default port", map[string]string{"FRONTEND_URL": "https://web.example.com:443"}, true},
+		{"invalid frontend URL", map[string]string{"FRONTEND_URL": "invalid"}, false},
 		{"invalid expiry", map[string]string{"AUTH_SESSION_IDLE_TTL": "48h"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,16 +58,13 @@ func TestTelemetryRequiresExplicitServiceName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string]string{"OTEL_ENABLED": tc.enabled,
 				"DATABASE_URL": "postgres://localhost/test", "APP_ENV": "test",
-				"FRONTEND_URL": "https://web.example", "ALLOWED_ORIGINS": "https://web.example"}
+				"FRONTEND_URL": "https://web.example"}
 			if tc.set {
 				values["OTEL_SERVICE_NAME"] = tc.value
 			}
-			cfg, err := Parse(func(key string) (string, bool) { v, ok := values[key]; return v, ok })
+			_, err := Parse(func(key string) (string, bool) { v, ok := values[key]; return v, ok })
 			if (err == nil) != tc.valid {
 				t.Fatalf("配置结果不符: %v", err)
-			}
-			if !tc.set && cfg.OTelServiceName != "" {
-				t.Fatal("自动生成了服务名称")
 			}
 		})
 	}

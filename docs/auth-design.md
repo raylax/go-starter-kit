@@ -29,12 +29,12 @@
 
 | 位置 | 职责 |
 | --- | --- |
-| `modules/account/service.go`、`model.go` | 依赖、选项、模型与业务错误 |
-| `registration.go` | 注册、验证、密码恢复与联系邮箱变更 |
-| `methods.go` | 重新认证、密码设置与修改、解绑 |
-| `federation.go` | 第三方登录、注册、绑定与确认 |
+| `modules/account/service.go`、`dependencies.go`、`model.go` | 服务与选项、外部依赖契约、模型与业务错误 |
+| `registration.go`、`challenges.go`、`email.go` | 注册与恢复、挑战编排、邮箱变更，各用途的完成逻辑独立 |
+| `reauthentication.go`、`password.go`、`linked_accounts.go` | 重新认证授权、密码设置与修改、账号绑定与解绑及可用性规则 |
+| `federation.go` | OAuth 发起、回调校验与各用途的事务完成逻辑 |
+| `store.go`、`store_queries.go`、`store_flows.go` | 写入校验、邮件入队与安全通知、显式查询集合和原子流程状态转换 |
 | `session.go`、`profile.go` | 会话校验与管理、资料读取与更新 |
-| `store.go` | 写入参数校验、邮件入队与安全通知 |
 | `audit.go` | 成功审计及独立失败记录 |
 | `admin.go`、`admin_http.go`、`admin_dto.go` | 本领域管理业务、路由与协议类型 |
 | `admin_checker.go` | 独立管理员资格查询 |
@@ -44,9 +44,11 @@
 | `modules/mailoutbox`、`platform/mail` | 邮件消费业务与供应商发送接口 |
 | `app/api`、`app/worker`、`app/appfx` | Fx 依赖装配、配置和生命周期 |
 
-业务模块不互相依赖，也不导入 Fx。账户服务接收密码处理、第三方流程和管理员授权依赖；邮件直接在业务事务内入队，发送器由 Worker 装配。`identity` 不访问数据库、HTTP 或应用配置。`app/api/wire.go` 将账户会话校验适配为 `identity.Authenticator`。
+业务模块不互相依赖，也不导入 Fx。账户服务接收完整的 `Passwords`、`Federation` 接口、管理员授权器和日志器；密码与日志是必需依赖，未提供 Federation 表示整体禁用，不支持分别注入不完整的 OAuth 函数集合。邮件直接在业务事务内入队，发送器由 Worker 装配。`identity` 不访问数据库、HTTP 或应用配置。`app/api/wire.go` 将账户会话校验适配为 `identity.Authenticator`。
 
-事务复用 `db.WithTransaction`；账户写入通过 `store` 校验。敏感操作锁定当前用户后复核原会话、用户版本及相关证明。Me 普通读取；UpdateProfile 不预先加行锁，其更新 SQL 检查用户与原会话仍有效，并与审计一起提交。管理员权限检查独立于业务事务，详见文末。
+事务复用 `db.WithTransaction`；账户写入通过 `store` 校验。仅为不可接受的并发后果加显式锁：会话签发、密码与账号变更、挑战消费、会话撤销继续通过用户锁保护跨表校验；Me 和 Sessions 普通读取。找回密码、邮箱挑战、重新认证及绑定流程的证明签发不预先显式锁定用户，接受竞争导致证明失效，最终消费时复核原会话、用户与账号版本。邮箱与版本必须来自同一次用户读取；并发换邮箱时可能向旧邮箱投递已失效挑战，不能把旧邮箱与新版本组合签发。
+
+流程读取不使用行锁，一次性认领和消费依赖带预期状态的条件更新及影响行数判定；创建绑定流程与认领证明同事务，先插入流程完成外键检查，再认领证明，竞争失败则整体回滚。UpdateProfile 不预先加行锁，其更新 SQL 检查用户与原会话仍有效，并与审计一起提交。管理员权限检查独立于业务事务，详见文末。
 
 ## 令牌与会话
 
@@ -87,7 +89,7 @@
 
 ## GitHub OAuth、绑定与重新认证
 
-提供商由 `AUTH_PROVIDERS_FILE` 配置，当前 protocol 仅接受 `github`。客户端密钥从文件读取；授权、令牌与用户 API 地址固定，scope 固定为 `read:user`，回调必须为受信前端 `/auth/callback`。配置版本摘要防止旧流程继续使用变更后的配置。
+提供商由 `AUTH_PROVIDERS_FILE` 配置，当前 protocol 仅接受 `github`。客户端密钥从文件读取；授权、令牌与用户 API 地址固定，scope 固定为 `read:user`，`redirect_uri` 独立指定 HTTPS 回调页面，不与 `FRONTEND_URL` 绑定。配置版本摘要防止旧流程继续使用变更后的配置。
 
 1. 前端创建 `login/register` 流程，或携带原会话和重新认证引用发起绑定。
 2. 后端保存流程令牌摘要、state 摘要、PKCE verifier、目的与归属，返回流程令牌和授权 URL。流程有效期 5 分钟。
@@ -95,7 +97,7 @@
 4. 后端校验 state、原子认领流程，然后在数据库事务外交换授权码并请求 GitHub 用户身份。
 5. 登录或注册返回本地会话；重新认证返回操作授权引用；绑定返回待确认身份，再由原会话调用确认接口完成。
 
-普通 login 不会为未知身份自动注册；必须显式使用 register。绑定不能转移别人已绑定的身份。流程成功或失败时清除协议状态；过期未完成流程目前没有自动载荷清理任务。
+普通 login 不会为未知身份自动注册；必须显式使用 register。绑定不能转移别人已绑定的身份。第三方网络、限流、5xx 或配置故障归类为依赖不可用；明确的无效授权码或用户凭据才归类为证明无效，请求上下文超时保留超时语义，错误文本不暴露供应商正文。流程成功或失败时清除协议状态；过期未完成流程目前没有自动载荷清理任务。
 
 重新认证引用绑定用户、原会话、用户/账号版本、操作和目标，只能消费一次。绑定和邮箱变更在开始时认领引用，最终提交时再次核对。解绑必须通过一个保留的可用账号证明控制权，且不能删除最后一个可用登录方式。
 
@@ -103,11 +105,11 @@ GitHub OAuth 证明新授权流程中的账号控制权，不保证用户再次�
 
 ## 前端接入约定
 
-仓库不包含前端实现。前端需实现 `/auth/verify` 与 `/auth/callback`。邮件验证链接通过 fragment 携带 token 和 purpose，前端读取后清理地址，再 POST 消费挑战，避免页面 GET 直接改变账户状态。
+仓库不包含前端实现。前端需实现 `/auth/verify` 与配置的 OAuth 回调页面。邮件验证链接通过 fragment 携带 token 和 purpose，前端读取后清理地址，再 POST 消费挑战，避免页面 GET 直接改变账户状态。
 
 建议会话令牌只存内存，通过 Authorization 调用 API，并设置 `credentials: "omit"`。页面完全重载后需重新登录；需要持久登录时另行明确存储策略。回调推荐弹窗，严格校验消息 origin/source/state；整页跳转需自行保留短期流程上下文及敏感绑定所需的原会话。
 
-API 使用精确 CORS origin，不接受通配来源或 Cookie 凭据。明确会话失效时清理令牌；证明错误、403 或服务故障不应直接当作登出。所有令牌、OAuth code、PKCE verifier 和邮件正文不得进入客户端遥测或日志。
+API 不检查 Origin，也不处理 CORS；跨域预检与响应头由网关配置。会话继续仅使用 Authorization，不引入 Cookie 凭据。明确会话失效时清理令牌；证明错误、403 或服务故障不应直接当作登出。所有令牌、OAuth code、PKCE verifier 和邮件正文不得进入客户端遥测或日志。
 
 ## HTTP 契约
 
@@ -172,17 +174,17 @@ API 使用精确 CORS origin，不接受通配来源或 Cookie 凭据。明确�
 
 管理员入口在服务层再次验证操作者角色和状态，角色信息以数据库为准。初始管理员由受控运维流程将指定已验证用户提升，并记录审计事件，不设置默认管理员密码，也不开放公开角色修改参数。启用用户不会恢复旧会话。
 
-路由清单为操作声明 `Public` 或 `Session` 策略；管理员权限在业务层检查。运行时与 OpenAPI 共用会话 Bearer 声明。验证与回调在 OpenAPI 中不声明 HTTP 认证，必填的正文 token 由服务端校验目的、期限和一次性消费。Public 只表示不要求会话，仍受凭据校验、限速和请求体大小限制。
+路由清单为操作声明 `Public` 或 `Session` 策略；管理员权限在业务层检查。通过 `httpapi.NewOperation` 显式选择策略，同时驱动运行时装配和 OpenAPI Security；缺失、未知策略或独立设置 Security 在注册时拒绝。验证与回调在 OpenAPI 中不声明 HTTP 认证，必填的正文 token 由服务端校验目的、期限和一次性消费。Public 只表示不要求会话，仍受凭据校验、限速和请求体大小限制。
 
-普通资源复用现有响应包装；令牌响应和授权流程使用 `MapEndpoint`，202/204 无正文成功使用 `NoContentEndpoint`。DTO 使用具名类型，例如 `UserRegisterRequest`、`UserLoginRequest`、`AccountLinkRequest`、`AccountLinkConfirmRequest`、`SessionCreateResponse`、`SessionListResponse`。验证与流程变体在 OpenAPI 中使用引用具名 schema 的 `oneOf`，由明确字段区分，并与运行时分支校验一致；不引入任意 action/payload 调度接口。公共错误分类已增加明确的 403 与 429 支持，继续由 `FromError` 统一映射；429 当前固定携带 `Retry-After: 900`。
+普通资源复用现有响应包装；令牌响应和授权流程使用 `MapEndpoint`，202/204 无正文成功使用 `NoContentEndpoint`。DTO 使用具名类型，例如 `UserRegisterRequest`、`UserLoginRequest`、`AccountLinkRequest`、`AccountLinkConfirmRequest`、`SessionCreateResponse`、`SessionListResponse`。验证与流程变体在 OpenAPI 中使用引用具名 schema 的 `oneOf`，由明确字段区分，并与运行时分支校验一致；不引入任意 action/payload 调度接口。公共错误分类已增加明确的 403 与 429 支持，继续由 `FromError` 统一映射；429 的 `Retry-After` 来自被触发限流桶的剩余有效秒数。
 
 ## 审计、限速与邮件
 
 `audit_events` 是各模块可追加的共享表，当前账户业务写入；项目与任务 CRUD 尚未追加审计。字段包括 action、outcome、actor、resource、scope_subject、session_id、request_id、reason_code、schema_version 与 JSON metadata。固定结果及操作者类型使用枚举；metadata 须为对象且不超过 8192 字节。多态身份保留历史快照，不通过级联删除审计。
 
-已实现的成功业务审计与变更同事务提交。配置失败审计的入口在返回时独立写入，使用最多 1 秒且不继承请求取消的上下文，失败仅记录固定日志，不覆盖原业务错误；429 不追加失败审计。会话认证与自动续期不写审计。当前无公开审计查询、自动保留清理或事件消费功能；生产运行账号仅授予审计 INSERT 权限。
+已实现的成功业务审计与变更同事务提交。配置失败审计的入口在返回时独立写入，使用最多 1 秒且不继承请求取消的上下文，失败使用注入的日志器记录固定提示、action 和 request_id，不覆盖原业务错误；429 不追加失败审计。会话认证与自动续期不写审计。当前无公开审计查询、自动保留清理或事件消费功能；生产运行账号仅授予审计 INSERT 权限。
 
-认证限速使用 `SHA-256(类别 + NUL + 限速对象)` 作为计数桶键，无密钥。常规入口按 IP 每分钟 60 次、主体每 15 分钟 10 次；verify/callback 按 IP 每分钟 60 次。计数到期后同桶重新计数，闲置桶没有自动删除任务。客户端 IP 使用连接对端，不信任转发头。429 的 Retry-After 当前固定为 900 秒。
+认证限速使用 `SHA-256(类别 + NUL + 限速对象)` 作为计数桶键，无密钥。常规入口按 IP 每分钟 60 次、主体每 15 分钟 10 次；OAuth 发起、verify/callback 仅按 IP 每分钟 60 次，OAuth 发起不再把 IP 当作已知主体。计数到期后同桶重新计数，闲置桶没有自动删除任务。客户端 IP 使用连接对端，不信任转发头。数据库同时返回计数与剩余窗口，业务错误携带等待时间，HTTP 层映射为 Retry-After。
 
 邮件通过共享 `mail_outbox` 与业务一起提交，Worker 异步领取、发送和重试。当前仅日志 mock，不实际投递，也不输出地址、正文或链接。正文为 HTML，动态内容转义；外部邮件 ID 用作幂等键，详细语义见 [邮件队列](mail-outbox.md)。
 
@@ -190,7 +192,7 @@ API 使用精确 CORS origin，不接受通配来源或 Cookie 凭据。明确�
 
 ## 数据库初始化与部署
 
-`internal/db/migrations/00001_init.sql` 为当前唯一完整基线，包含项目、任务、用户、账号、会话、流程、挑战、审计、限速和邮件队列共 10 张表。新主键使用 UUID v7；已移除 nonce 字段，不使用 CHECK。空数据库运行 `make migrate-up`，API/Worker 启动不自动迁移；`migrate down` 删除全部业务表。
+`internal/db/migrations/00001_init.sql` 为当前唯一完整基线，包含项目、任务、用户、账号、会话、流程、挑战、审计、限速和邮件队列共 10 张表。新主键由 Go 代码生成 UUID v4，SQL 显式接收 ID，数据库不设置 UUID 生成默认值；已移除 nonce 字段，不使用 CHECK。空数据库运行 `make migrate-up`，API/Worker 启动不自动迁移；`migrate down` 删除全部业务表。
 
 该基线用于空数据库，不能自动升级已经应用旧版 00001 或 00002 的数据库。存量环境需单独迁移或在允许丢弃数据时重建。项目和任务 owner 仍为 TEXT；若有历史外部 subject，必须通过可信映射迁移，不按邮箱或首个注册用户猜测归属。
 
@@ -210,7 +212,7 @@ API 使用精确 CORS origin，不接受通配来源或 Cookie 凭据。明确�
 
 ### 公共管理员授权
 
-`internal/authorization.Authorizer` 定义 `RequireAdmin(ctx, Subject)`；Subject 只包含服务端认证得到的用户 ID 和原会话 ID。`account.AdminChecker` 使用一个普通查询同时检查用户状态、会话归属、撤销及有效期、认证版本和角色。`app/api/authorization.go` 将它适配为公共接口并由 Fx 注入。
+`internal/authorization.Authorizer` 定义 `RequireAdmin(ctx, Subject)`；Subject 只包含服务端认证得到的用户 ID 和原会话 ID。`account.AdminChecker` 使用一个普通查询同时检查用户状态、会话归属、撤销及有效期、认证版本和角色。`app/api/accounts.go` 将它适配为公共接口并由 Fx 注入。
 
 账户 Service 与权限查询独立，依赖图为数据库 → AdminChecker/Authorizer → 业务 Service。后续项目或任务管理入口注入同一接口，保持模块之间无直接依赖。授权失败立即返回；成功后再开启业务事务，业务变更与审计同事务。不使用显式行锁，权限在检查之后发生变化时不保证与本次业务写入串行化。
 

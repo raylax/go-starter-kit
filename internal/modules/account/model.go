@@ -2,7 +2,6 @@
 package account
 
 import (
-	"context"
 	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/google/uuid"
@@ -89,20 +88,4 @@ type Reauthentication struct {
 type Verification struct {
 	Purpose     VerificationPurpose
 	NewPassword string
-}
-type Options struct {
-	IdleTTL, MaxTTL time.Duration
-	FrontendURL     string
-}
-
-// Dependencies 隔离密码及第三方协议，数据库事务由本模块掌握。
-type Dependencies struct {
-	Authorizer      authorization.Authorizer
-	Hash            func(context.Context, string) (string, error)
-	Verify          func(context.Context, string, string) (bool, bool, error)
-	ValidPassword   func(string) bool
-	ProviderEnabled func(string) bool
-	ProviderVersion func(string) string
-	StartProvider   func(context.Context, string, string, string) (string, string, error)
-	VerifyProvider  func(context.Context, string, string, string, string) (VerifiedIdentity, error)
 }

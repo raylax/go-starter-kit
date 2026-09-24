@@ -23,7 +23,7 @@ func newHTTPService(in httpDependencies) *httpService {
 		OnStart: func(ctx context.Context) error {
 			// 在基础设施启动后构造 handler，让遥测中间件使用已安装的 provider。
 			handler, _, err := NewHandler(in.Config, in.Logger, Dependencies{
-				Projects: in.Projects, Tasks: in.Tasks, Accounts: in.Accounts, Authenticator: in.Authenticator,
+				Projects: in.Services.Projects, Tasks: in.Services.Tasks, Accounts: in.Services.Accounts, Authenticator: in.Services.Authenticator,
 				Ready: func(ctx context.Context) error {
 					if draining.Load() {
 						return fmt.Errorf("服务正在停止")

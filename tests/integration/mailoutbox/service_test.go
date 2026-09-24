@@ -1,29 +1,30 @@
 //go:build integration
 
-package mailoutbox
+package mailoutbox_test
 
 import (
 	"context"
 	"errors"
+	"github.com/example/go-starter-kit/internal/modules/mailoutbox"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/example/go-starter-kit/internal/testutil"
+	"github.com/example/go-starter-kit/tests/integration/testutil"
 	"github.com/google/uuid"
 )
 
 func TestRetryAndClearPayload(t *testing.T) {
 	pool, _ := testutil.Database(t)
 	q := sqlc.New(pool)
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.New()
 	if err := q.EnqueueMail(t.Context(), sqlc.EnqueueMailParams{ID: id, Kind: "register", Recipient: "test@example.com", Subject: "test", Body: "private", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
-	service, err := NewService(pool, func(_ context.Context, m Message) error {
+	service, err := mailoutbox.NewService(pool, func(_ context.Context, m mailoutbox.Message) error {
 		calls++
 		if m.ID != id.String() {
 			t.Fatal("重试未复用邮件 ID")
@@ -53,7 +54,7 @@ func TestRetryAndClearPayload(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), "SELECT status, recipient, body, attempts FROM mail_outbox WHERE id=$1", id).Scan(&status, &recipient, &body, &attempts); err != nil {
 		t.Fatal(err)
 	}
-	if Status(status) != StatusSent || recipient != "" || body != "" || attempts != 2 {
+	if mailoutbox.Status(status) != mailoutbox.StatusSent || recipient != "" || body != "" || attempts != 2 {
 		t.Fatal("终态或敏感载荷清除错误")
 	}
 }
@@ -61,11 +62,11 @@ func TestRetryAndClearPayload(t *testing.T) {
 func TestLeaseOwnershipAndExpiry(t *testing.T) {
 	pool, _ := testutil.Database(t)
 	q := sqlc.New(pool)
-	id := uuid.Must(uuid.NewV7())
+	id := uuid.New()
 	if err := q.EnqueueMail(t.Context(), sqlc.EnqueueMailParams{ID: id, Kind: "test", Recipient: "test@example.com", Subject: "test", Body: "private", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	first, second := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	first, second := uuid.New(), uuid.New()
 	if _, err := q.ClaimMail(t.Context(), &first); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestLeaseOwnershipAndExpiry(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), "SELECT status,body FROM mail_outbox WHERE id=$1", id).Scan(&status, &body); err != nil {
 		t.Fatal(err)
 	}
-	if Status(status) != StatusFailed || body != "" {
+	if mailoutbox.Status(status) != mailoutbox.StatusFailed || body != "" {
 		t.Fatal("过期邮件未终止并清除正文")
 	}
 }

@@ -12,11 +12,12 @@ import (
 )
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO user_sessions(user_id, token_hash, auth_method, auth_source_id, auth_version, idle_expires_at, absolute_expires_at)
-VALUES ($1, $2, $3, $4, $5, now() + $6::bigint * interval '1 second', now() + $7::bigint * interval '1 second') RETURNING id, user_id, token_hash, auth_method, auth_source_id, authenticated_at, auth_version, created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at
+INSERT INTO user_sessions(id, user_id, token_hash, auth_method, auth_source_id, auth_version, idle_expires_at, absolute_expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, now() + $7::bigint * interval '1 second', now() + $8::bigint * interval '1 second') RETURNING id, user_id, token_hash, auth_method, auth_source_id, authenticated_at, auth_version, created_at, last_seen_at, idle_expires_at, absolute_expires_at, revoked_at
 `
 
 type CreateSessionParams struct {
+	ID           uuid.UUID
 	UserID       uuid.UUID
 	TokenHash    []byte
 	AuthMethod   string
@@ -28,6 +29,7 @@ type CreateSessionParams struct {
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (UserSession, error) {
 	row := q.db.QueryRow(ctx, createSession,
+		arg.ID,
 		arg.UserID,
 		arg.TokenHash,
 		arg.AuthMethod,

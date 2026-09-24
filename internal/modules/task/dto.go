@@ -42,13 +42,9 @@ type TaskListInput struct {
 	Status Status `query:"status" enum:"todo,in_progress,done" required:"false"`
 	httpapi.PageQuery
 }
-type TaskOutput = httpapi.ItemOutput[Task]
-type TaskCreatedOutput = httpapi.CreatedOutput[Task]
 
 // 具名分页 DTO 为公开 schema 提供稳定的资源名称。
 type TaskListResponse httpapi.Page[Task]
-
-type TaskListOutput = httpapi.ItemOutput[TaskListResponse]
 
 // toDTO 保持业务模型与 DTO 独立，结构不再匹配时会在编译期报错。
 func toDTO(item Record) Task {
