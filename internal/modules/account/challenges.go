@@ -19,6 +19,11 @@ const (
 	registrationChallengeTTL  = 24 * time.Hour
 	passwordResetChallengeTTL = 15 * time.Minute
 	emailChangeChallengeTTL   = 5 * time.Minute
+
+	verificationMailSubject           = "Verify your account"
+	verificationMailBodyTemplate      = `<p>请在有效期内完成账户验证。请勿转发此邮件。</p><p><a href="%s">验证账户</a></p>`
+	registrationCompletedNotification = "您的账户已完成注册，邮箱验证及密码设置成功。您现在可以登录。"
+	passwordResetNotification         = "您的账户密码已重置。如非本人操作，请立即联系管理员。"
 )
 
 func (s *Service) createChallenge(ctx context.Context, q *store, u sqlc.User, purpose VerificationPurpose, email string, ttl time.Duration, session, reauth *uuid.UUID) (sqlc.AuthVerification, error) {
@@ -34,7 +39,7 @@ func (s *Service) createChallenge(ctx context.Context, q *store, u sqlc.User, pu
 	link.Path = "/auth/verify"
 	link.RawQuery = ""
 	link.Fragment = url.Values{"token": {token}, "purpose": {string(purpose)}}.Encode()
-	err := q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: string(purpose), Recipient: email, Subject: "Verify your account", Body: fmt.Sprintf(`<p>请在有效期内完成账户验证。请勿转发此邮件。</p><p><a href="%s">验证账户</a></p>`, html.EscapeString(link.String())), ExpiresAt: v.ExpiresAt})
+	err := q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: string(purpose), Recipient: email, Subject: verificationMailSubject, Body: fmt.Sprintf(verificationMailBodyTemplate, html.EscapeString(link.String())), ExpiresAt: v.ExpiresAt})
 	return v, err
 }
 func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, input Verification) (failureErr error) {
@@ -89,10 +94,10 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 		switch input.Purpose {
 		case VerifyRegister:
 			u, e = s.completeRegistration(ctx, q, u, v, passwordHash)
-			notification = "您的账户已完成注册，邮箱验证及密码设置成功。您现在可以登录。"
+			notification = registrationCompletedNotification
 		case VerifyResetPassword:
 			e = s.completePasswordReset(ctx, q, u, v, passwordHash)
-			notification = "您的账户密码已重置。如非本人操作，请立即联系管理员。"
+			notification = passwordResetNotification
 		case VerifyChangeEmail:
 			e = s.completeEmailChange(ctx, q, u, v)
 		default:

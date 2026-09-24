@@ -21,6 +21,8 @@ const (
 	maxMailSubjectBytes     = 998
 	maxMailBodyBytes        = 64 << 10 // 64 KiB
 	securityNotificationTTL = 24 * time.Hour
+
+	securityNotificationSubject = "Account security notification"
 )
 
 // store 在账户模块的写入入口维护字段和组合规则，SQL 仅负责持久化与并发约束。
@@ -202,5 +204,5 @@ func (q *store) enqueueSecurityNotification(ctx context.Context, user sqlc.User,
 	if user.Email == nil || user.EmailVerifiedAt == nil {
 		return nil
 	}
-	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: SecurityNotificationKind, Recipient: *user.Email, Subject: "Account security notification", Body: "<p>" + html.EscapeString(body) + "</p>", ExpiresAt: time.Now().Add(securityNotificationTTL)})
+	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: SecurityNotificationKind, Recipient: *user.Email, Subject: securityNotificationSubject, Body: "<p>" + html.EscapeString(body) + "</p>", ExpiresAt: time.Now().Add(securityNotificationTTL)})
 }

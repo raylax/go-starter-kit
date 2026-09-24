@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const emailChangedNotification = "账户联系邮箱已修改。如果不是本人操作，请联系管理员。"
+
 func (s *Service) ChangeEmail(ctx context.Context, r Request, email string, reauthID uuid.UUID) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "user.email_change", &failureErr)
 	email, e := normalizeEmail(email)
@@ -59,5 +61,5 @@ func (s *Service) completeEmailChange(ctx context.Context, q *store, u sqlc.User
 	if err = q.RevokeUserSessions(ctx, u.ID); err != nil {
 		return err
 	}
-	return q.enqueueSecurityNotification(ctx, u, "账户联系邮箱已修改。如果不是本人操作，请联系管理员。")
+	return q.enqueueSecurityNotification(ctx, u, emailChangedNotification)
 }

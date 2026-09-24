@@ -10,7 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const maxLoginAccounts = 10
+const (
+	maxLoginAccounts = 10
+
+	accountLinkedNotification   = "新的第三方登录账号已绑定。"
+	accountUnlinkedNotification = "一个登录账号已解除绑定，请使用保留的方式重新登录。"
+)
 
 func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) (failureErr error) {
 	defer func() {
@@ -73,7 +78,7 @@ func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) 
 		if e = finishAuthorization(ctx, q, f); e != nil {
 			return e
 		}
-		if err := q.enqueueSecurityNotification(ctx, u, "新的第三方登录账号已绑定。"); err != nil {
+		if err := q.enqueueSecurityNotification(ctx, u, accountLinkedNotification); err != nil {
 			return err
 		}
 		metadata := accountProviderAuditMetadata{Provider: f.ProviderID}
@@ -121,7 +126,7 @@ func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID uuid.UUID)
 		if e = s.invalidate(ctx, q, u.ID); e != nil {
 			return e
 		}
-		if err := q.enqueueSecurityNotification(ctx, u, "一个登录账号已解除绑定，请使用保留的方式重新登录。"); err != nil {
+		if err := q.enqueueSecurityNotification(ctx, u, accountUnlinkedNotification); err != nil {
 			return err
 		}
 		metadata := accountProviderAuditMetadata{Provider: a.ProviderID}

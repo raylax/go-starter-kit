@@ -10,93 +10,94 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const passwordChangedNotification = "您的账户密码已修改。如非本人操作，请立即联系管理员。"
+
 func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, newPassword string, reauthID uuid.UUID) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "account.password_change", &failureErr)
 	if !s.deps.Passwords.Validate(newPassword) {
 		return ErrInvalid
 	}
-	if e := s.entryLimit(ctx, r, "password", r.UserID); e != nil {
-		return e
+	if err := s.entryLimit(ctx, r, "password", r.UserID); err != nil {
+		return err
 	}
-	before, _, e := s.readSelf(ctx, s.queries, r)
-	if e != nil {
-		return db.MapError(e, storageErrors)
+	userBefore, _, err := s.readSelf(ctx, s.queries, r)
+	if err != nil {
+		return db.MapError(err, storageErrors)
 	}
-	a, ae := s.queries.GetPasswordAccount(ctx, before.ID)
-	if ae != nil && !errors.Is(ae, pgx.ErrNoRows) {
-		return ae
+	passwordAccount, accountErr := s.queries.GetPasswordAccount(ctx, userBefore.ID)
+	if accountErr != nil && !errors.Is(accountErr, pgx.ErrNoRows) {
+		return accountErr
 	}
-	if ae == nil {
-		ok, _, e := s.deps.Passwords.Verify(ctx, text(a.PasswordHash), currentPassword)
-		if e != nil {
-			return e
+	hasPassword := accountErr == nil
+	if hasPassword {
+		matches, _, err := s.deps.Passwords.Verify(ctx, text(passwordAccount.PasswordHash), currentPassword)
+		if err != nil {
+			return err
 		}
-		if !ok {
+		if !matches {
 			return ErrReauthentication
 		}
 	} else if currentPassword != "" || reauthID == uuid.Nil {
 		return ErrInvalid
 	}
-	hash, e := s.deps.Passwords.Hash(ctx, newPassword)
-	if e != nil {
-		return e
+	passwordHash, err := s.deps.Passwords.Hash(ctx, newPassword)
+	if err != nil {
+		return err
 	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		u, _, e := s.lockSelf(ctx, q, r)
-		if e != nil {
-			return e
-		}
-		if u.AuthVersion != before.AuthVersion {
-			return ErrReauthentication
-		}
-		current, ce := q.GetPasswordAccount(ctx, u.ID)
-		notification := "您的账户密码已修改。如非本人操作，请立即联系管理员。"
-		if ae == nil {
-			if ce != nil {
-				return proofError(credentialLookupError(ce), ErrReauthentication)
-			}
-			if current.ID != a.ID || current.Version != a.Version {
-				return ErrReauthentication
-			}
-			if _, e = q.ChangePassword(ctx, sqlc.ChangePasswordParams{ID: a.ID, UserID: u.ID, PasswordHash: &hash}); e != nil {
-				return e
-			}
-		} else {
-			notification = "您的账户已设置登录密码。如非本人操作，请立即联系管理员。"
-			if !errors.Is(ce, pgx.ErrNoRows) {
-				if ce != nil {
-					return ce
-				}
-				return ErrConflict
-			}
-			if u.EmailVerifiedAt == nil {
-				return ErrInvalid
-			}
-			proof, e := s.authorization(ctx, q, r, reauthID, OperationSetPassword, CredentialProvider, nil)
-			if e != nil {
-				return e
-			}
-			rows, e := q.ListAccounts(ctx, u.ID)
-			if e != nil {
-				return e
-			}
-			if len(rows) >= maxLoginAccounts {
-				return ErrConflict
-			}
-			if _, e = q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: u.ID, ProviderID: CredentialProvider, ProviderAccountID: u.ID.String(), ProviderNamespace: LocalNamespace, PasswordHash: &hash}); e != nil {
-				return e
-			}
-			if e = finishAuthorization(ctx, q, proof); e != nil {
-				return e
-			}
-		}
-		if e = s.invalidate(ctx, q, u.ID); e != nil {
-			return e
-		}
-		if err := q.enqueueSecurityNotification(ctx, u, notification); err != nil {
+		user, _, err := s.lockSelf(ctx, q, r)
+		if err != nil {
 			return err
 		}
-		return audit(ctx, q, r, "account.password_change", AuditSuccess, "user", u.ID.String(), u.ID.String(), "", nil)
+		if user.AuthVersion != userBefore.AuthVersion {
+			return ErrReauthentication
+		}
+		currentAccount, lookupErr := q.GetPasswordAccount(ctx, user.ID)
+		if hasPassword {
+			if lookupErr != nil {
+				return proofError(credentialLookupError(lookupErr), ErrReauthentication)
+			}
+			if currentAccount.ID != passwordAccount.ID || currentAccount.Version != passwordAccount.Version {
+				return ErrReauthentication
+			}
+			if _, err := q.ChangePassword(ctx, sqlc.ChangePasswordParams{ID: passwordAccount.ID, UserID: user.ID, PasswordHash: &passwordHash}); err != nil {
+				return err
+			}
+		} else {
+			if lookupErr == nil {
+				return ErrConflict
+			}
+			if !errors.Is(lookupErr, pgx.ErrNoRows) {
+				return lookupErr
+			}
+			if user.EmailVerifiedAt == nil {
+				return ErrInvalid
+			}
+			proof, err := s.authorization(ctx, q, r, reauthID, OperationSetPassword, CredentialProvider, nil)
+			if err != nil {
+				return err
+			}
+			accounts, err := q.ListAccounts(ctx, user.ID)
+			if err != nil {
+				return err
+			}
+			if len(accounts) >= maxLoginAccounts {
+				return ErrConflict
+			}
+			if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: user.ID, ProviderID: CredentialProvider, ProviderAccountID: user.ID.String(), ProviderNamespace: LocalNamespace, PasswordHash: &passwordHash}); err != nil {
+				return err
+			}
+			if err := finishAuthorization(ctx, q, proof); err != nil {
+				return err
+			}
+		}
+		if err := s.invalidate(ctx, q, user.ID); err != nil {
+			return err
+		}
+		if err := q.enqueueSecurityNotification(ctx, user, passwordChangedNotification); err != nil {
+			return err
+		}
+		return audit(ctx, q, r, "account.password_change", AuditSuccess, "user", user.ID.String(), user.ID.String(), "", nil)
 	})
 }
