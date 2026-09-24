@@ -9,10 +9,24 @@ import (
 	"github.com/alexedwards/argon2id"
 )
 
-const memory uint32 = 19 * 1024
-const iterations uint32 = 2
-const maxPasswordBytes = 512
-const maxEncodedHashBytes = 256
+// 默认哈希参数与可接受的历史哈希资源上限分别维护。
+const (
+	memory      uint32 = 19 * 1024
+	iterations  uint32 = 2
+	parallelism uint8  = 1
+	saltBytes   uint32 = 16
+	keyBytes    uint32 = 32
+
+	minPasswordRunes    = 15
+	maxPasswordRunes    = 128
+	maxPasswordBytes    = 512
+	maxEncodedHashBytes = 256
+	minHashMemoryKiB    = 8
+	maxHashMemoryKiB    = 64 * 1024
+	maxHashIterations   = 4
+	minHashSaltBytes    = 16
+	maxHashSaltBytes    = 32
+)
 
 type Hasher struct {
 	slots chan struct{}
@@ -36,7 +50,7 @@ func (h *Hasher) Validate(value string) bool { return Validate(value) }
 
 func Validate(value string) bool {
 	n := utf8.RuneCountInString(value)
-	return utf8.ValidString(value) && n >= 15 && n <= 128 && len(value) <= maxPasswordBytes
+	return utf8.ValidString(value) && n >= minPasswordRunes && n <= maxPasswordRunes && len(value) <= maxPasswordBytes
 }
 
 func (h *Hasher) acquire(ctx context.Context) error {
@@ -64,7 +78,7 @@ func (h *Hasher) Hash(ctx context.Context, value string) (string, error) {
 	}
 	defer func() { <-h.slots }()
 	hash, err := argon2id.CreateHash(value, &argon2id.Params{
-		Memory: memory, Iterations: iterations, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+		Memory: memory, Iterations: iterations, Parallelism: parallelism, SaltLength: saltBytes, KeyLength: keyBytes,
 	})
 	if err != nil {
 		return "", fmt.Errorf("密码哈希生成失败: %w", err)
@@ -111,7 +125,7 @@ func (h *Hasher) Verify(ctx context.Context, hash, value string) (bool, bool, er
 
 // allowedParams 仅维护服务的资源策略；PHC 格式、Base64 与常量时间比较交给库。
 func allowedParams(p *argon2id.Params) bool {
-	return p != nil && p.Memory >= 8 && p.Memory <= 64*1024 &&
-		p.Iterations >= 1 && p.Iterations <= 4 && p.Parallelism == 1 &&
-		p.SaltLength >= 16 && p.SaltLength <= 32 && p.KeyLength == 32
+	return p != nil && p.Memory >= minHashMemoryKiB && p.Memory <= maxHashMemoryKiB &&
+		p.Iterations >= 1 && p.Iterations <= maxHashIterations && p.Parallelism == parallelism &&
+		p.SaltLength >= minHashSaltBytes && p.SaltLength <= maxHashSaltBytes && p.KeyLength == keyBytes
 }

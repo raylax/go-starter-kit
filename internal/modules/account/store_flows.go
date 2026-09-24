@@ -33,7 +33,7 @@ func (q *store) consumeFlow(ctx context.Context, id uuid.UUID, expected FlowStat
 	}
 }
 func (q *store) verifyFlow(ctx context.Context, id uuid.UUID, status FlowStatus, v VerifiedIdentity) error {
-	if !status.Verifiable() || !validBytes(v.Namespace, 2048) || v.Namespace == LocalNamespace || !validBytes(v.Subject, 1024) || !validation.TextWithin(v.Name, 100) {
+	if !status.Verifiable() || !validBytes(v.Namespace, maxProviderNamespaceBytes) || v.Namespace == LocalNamespace || !validBytes(v.Subject, maxProviderSubjectBytes) || !validation.TextWithin(v.Name, maxDisplayNameRunes) {
 		return ErrInvalid
 	}
 	return transitionResult(q.rawQueries.VerifyFlow(ctx, sqlc.VerifyFlowParams{ID: id, Status: string(status), VerifiedNamespace: v.Namespace, VerifiedSubject: v.Subject, VerifiedName: v.Name, AuthenticatedAt: &v.AuthenticatedAt}))

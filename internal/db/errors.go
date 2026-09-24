@@ -11,6 +11,8 @@ import (
 	"github.com/example/go-starter-kit/internal/apperror"
 )
 
+const uniqueViolationSQLState = "23505"
+
 // ErrorPolicy 声明本业务可识别的数据库错误；未声明的约束不会对外公开。
 type ErrorPolicy struct {
 	Resource          string
@@ -29,7 +31,7 @@ func MapError(err error, policy ErrorPolicy) error {
 		return apperror.Wrap(policy.NotFound, err)
 	}
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationSQLState {
 		if business := policy.UniqueConstraints[pgErr.ConstraintName]; business != nil {
 			return apperror.Wrap(business, err)
 		}

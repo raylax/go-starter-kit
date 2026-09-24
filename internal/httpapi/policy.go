@@ -8,12 +8,23 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+const defaultMaxRequestBodyBytes = 1 << 20 // 1 MiB
+
 // ProtectedOperations 为业务模块声明统一的认证、请求限制和错误契约。
 func ProtectedOperations(tag string, extraErrors ...int) func(huma.Operation) Operation {
 	return func(spec huma.Operation) Operation {
 		spec.Tags = []string{tag}
-		spec.Errors = append([]int{400, 401, 404, 413, 422, 500, 503, 504}, extraErrors...)
-		spec.MaxBodyBytes = 1 << 20
+		spec.Errors = append([]int{
+			http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusNotFound,
+			http.StatusRequestEntityTooLarge,
+			http.StatusUnprocessableEntity,
+			http.StatusInternalServerError,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout,
+		}, extraErrors...)
+		spec.MaxBodyBytes = defaultMaxRequestBodyBytes
 		return NewOperation(Session, spec)
 	}
 }

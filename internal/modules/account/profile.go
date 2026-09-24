@@ -23,7 +23,7 @@ func (s *Service) Me(ctx context.Context, r Request) (Profile, error) {
 }
 
 func (s *Service) UpdateProfile(ctx context.Context, r Request, name string) (UserRecord, error) {
-	name, valid := validation.RequiredText(name, 100)
+	name, valid := validation.RequiredText(name, maxDisplayNameRunes)
 	if !valid {
 		return UserRecord{}, ErrInvalid
 	}

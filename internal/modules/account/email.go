@@ -2,7 +2,6 @@ package account
 
 import (
 	"context"
-	"time"
 
 	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/example/go-starter-kit/internal/db"
@@ -32,7 +31,7 @@ func (s *Service) ChangeEmail(ctx context.Context, r Request, email string, reau
 		if _, e = s.authorization(ctx, q, r, reauthID, OperationChangeEmail, email, nil); e != nil {
 			return e
 		}
-		v, e := s.createChallenge(ctx, q, u, VerifyChangeEmail, email, 5*time.Minute, &session.ID, &reauthID)
+		v, e := s.createChallenge(ctx, q, u, VerifyChangeEmail, email, emailChangeChallengeTTL, &session.ID, &reauthID)
 		if e != nil {
 			return e
 		}

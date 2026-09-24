@@ -110,7 +110,7 @@ func (f *accountFixture) call(method, path, token string, body any, want int) []
 	if res.StatusCode != want {
 		f.t.Fatalf("%s %s status=%d want=%d error=%s", method, path, res.StatusCode, want, safeError(out))
 	}
-	if want == 429 && res.Header.Get("Retry-After") == "" {
+	if want == http.StatusTooManyRequests && res.Header.Get("Retry-After") == "" {
 		f.t.Fatal("缺少重试期限")
 	}
 	return out
@@ -164,16 +164,16 @@ func (f *accountFixture) challenge(email, purpose string) string {
 }
 func (f *accountFixture) register(email string) account.SessionCreateResponse {
 	f.t.Helper()
-	f.call("POST", "/v1/auth/register", "", map[string]any{"email": email}, 202)
+	f.call(http.MethodPost, "/v1/auth/register", "", map[string]any{"email": email}, http.StatusAccepted)
 	token := f.challenge(email, "register")
-	f.call("POST", "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, 204)
+	f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, http.StatusNoContent)
 	return f.login(email, testPassword)
 }
 func (f *accountFixture) login(email, pw string) account.SessionCreateResponse {
-	return decode[account.SessionCreateResponse](f.t, f.call("POST", "/v1/auth/login", "", map[string]any{"email": email, "password": pw}, 200))
+	return decode[account.SessionCreateResponse](f.t, f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": email, "password": pw}, http.StatusOK))
 }
 func (f *accountFixture) reauth(token, pw, operation, target string) uuid.UUID {
-	v := decode[account.UserReauthenticateResponse](f.t, f.call("POST", "/v1/me/reauthenticate", token, map[string]any{"method": "password", "password": pw, "operation": operation, "target": target}, 200))
+	v := decode[account.UserReauthenticateResponse](f.t, f.call(http.MethodPost, "/v1/me/reauthenticate", token, map[string]any{"method": "password", "password": pw, "operation": operation, "target": target}, http.StatusOK))
 	if v.ReauthenticationID == nil {
 		f.t.Fatal("缺少重新认证引用")
 	}
@@ -184,8 +184,8 @@ func (f *accountFixture) callback(flow account.AuthFlowResponse, code string, wa
 	if e != nil {
 		f.t.Fatal(e)
 	}
-	data := f.call("POST", "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": code, "state": u.Query().Get("state")}, want)
-	if want != 200 {
+	data := f.call(http.MethodPost, "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": code, "state": u.Query().Get("state")}, want)
+	if want != http.StatusOK {
 		return account.AuthCallbackResponse{}
 	}
 	return decode[account.AuthCallbackResponse](f.t, data)

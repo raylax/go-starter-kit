@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	maxNamespaceBytes = 64
+	maxKeyBytes       = 256
+)
+
 type Options struct {
 	Namespace      string
 	AcquireTimeout time.Duration
@@ -26,7 +31,7 @@ type Runner struct {
 var _ Locker = (*Runner)(nil)
 
 func New(backend Backend, o Options) (*Runner, error) {
-	if backend == nil || !validKey(o.Namespace, 64) || strings.Contains(o.Namespace, ":") {
+	if backend == nil || !validKey(o.Namespace, maxNamespaceBytes) || strings.Contains(o.Namespace, ":") {
 		return nil, fmt.Errorf("锁后端或命名空间无效")
 	}
 	if o.AcquireTimeout == 0 {
@@ -70,7 +75,7 @@ type heldKey struct {
 type heldContextKey struct{}
 
 func (r *Runner) prepare(ctx context.Context, key string, task Task) (string, error) {
-	if !validKey(key, 256) {
+	if !validKey(key, maxKeyBytes) {
 		return "", ErrInvalidKey
 	}
 	if task == nil {

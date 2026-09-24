@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -20,113 +21,113 @@ import (
 func TestAccountHTTP(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	f.call("POST", "/v1/auth/register", "", map[string]any{"email": "alice@example.com", "role": "admin"}, 422)
+	f.call(http.MethodPost, "/v1/auth/register", "", map[string]any{"email": "alice@example.com", "role": "admin"}, http.StatusUnprocessableEntity)
 	alice := f.register("alice@example.com")
 	bob := f.register("bob@example.com")
 	if !strings.HasPrefix(alice.Token, "tk_") || strings.Contains(alice.Token, ".") {
 		t.Fatal("会话令牌格式错误")
 	}
-	me := decode[account.UserProfile](t, f.call("GET", "/v1/me", alice.Token, nil, 200))
+	me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusOK))
 	if me.User.Role != "user" || !me.User.EmailVerified || len(me.Accounts) != 1 {
 		t.Fatal("注册模型错误")
 	}
-	f.call("PATCH", "/v1/me", alice.Token, map[string]any{"display_name": "Alice", "role": "admin"}, 422)
-	f.call("PATCH", "/v1/me", alice.Token, map[string]any{"display_name": "Alice"}, 200)
-	f.call("GET", "/v1/admin/users", alice.Token, nil, 403)
-	f.call("DELETE", "/v1/me/sessions/"+alice.SessionID.String(), bob.Token, nil, 404)
-	f.call("GET", "/v1/me", alice.SessionID.String(), nil, 401)
-	f.call("GET", "/v1/me", f.challenge("alice@example.com", "register"), nil, 401)
-	f.call("POST", "/v1/auth/verify", "", map[string]any{"token": f.challenge("alice@example.com", "register"), "purpose": "register", "new_password": testPassword}, 422)
-	f.call("POST", "/v1/auth/login", "", map[string]any{"email": "alice@example.com", "password": "wrong"}, 401)
-	f.call("POST", "/v1/me/reauthenticate", alice.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID.String()}, 409)
+	f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice", "role": "admin"}, http.StatusUnprocessableEntity)
+	f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice"}, http.StatusOK)
+	f.call(http.MethodGet, "/v1/admin/users", alice.Token, nil, http.StatusForbidden)
+	f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID.String(), bob.Token, nil, http.StatusNotFound)
+	f.call(http.MethodGet, "/v1/me", alice.SessionID.String(), nil, http.StatusUnauthorized)
+	f.call(http.MethodGet, "/v1/me", f.challenge("alice@example.com", "register"), nil, http.StatusUnauthorized)
+	f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": f.challenge("alice@example.com", "register"), "purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
+	f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": "alice@example.com", "password": "wrong"}, http.StatusUnauthorized)
+	f.call(http.MethodPost, "/v1/me/reauthenticate", alice.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID.String()}, http.StatusConflict)
 
 	t.Run("第三方绑定与目的隔离", func(t *testing.T) {
 		proof := f.reauth(alice.Token, testPassword, "link_account", "demo")
-		flow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, 200))
-		f.call("POST", "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, 422)
+		flow := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, http.StatusOK))
+		f.call(http.MethodPost, "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, http.StatusUnprocessableEntity)
 		u, _ := url.Parse(flow.AuthorizationURL)
-		f.call("POST", "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": "alice-social", "state": "wrong"}, 422)
-		pending := f.callback(flow, "alice-social", 200)
+		f.call(http.MethodPost, "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": "alice-social", "state": "wrong"}, http.StatusUnprocessableEntity)
+		pending := f.callback(flow, "alice-social", http.StatusOK)
 		if pending.Result != "link_pending" {
 			t.Fatal("绑定回调不应直接创建会话")
 		}
-		f.call("POST", "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": "alice-social", "state": u.Query().Get("state")}, 422)
-		f.call("POST", "/v1/me/accounts/link/confirm", bob.Token, map[string]any{"flow_id": flow.FlowID}, 422)
-		f.call("POST", "/v1/me/accounts/link/confirm", alice.Token, map[string]any{"flow_id": flow.FlowID}, 204)
-		f.call("POST", "/v1/me/accounts/link/confirm", alice.Token, map[string]any{"flow_id": flow.FlowID}, 204)
-		loginFlow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200))
-		signed := f.callback(loginFlow, "alice-social", 200)
+		f.call(http.MethodPost, "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": "alice-social", "state": u.Query().Get("state")}, http.StatusUnprocessableEntity)
+		f.call(http.MethodPost, "/v1/me/accounts/link/confirm", bob.Token, map[string]any{"flow_id": flow.FlowID}, http.StatusUnprocessableEntity)
+		f.call(http.MethodPost, "/v1/me/accounts/link/confirm", alice.Token, map[string]any{"flow_id": flow.FlowID}, http.StatusNoContent)
+		f.call(http.MethodPost, "/v1/me/accounts/link/confirm", alice.Token, map[string]any{"flow_id": flow.FlowID}, http.StatusNoContent)
+		loginFlow := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, http.StatusOK))
+		signed := f.callback(loginFlow, "alice-social", http.StatusOK)
 		if signed.Session == nil {
 			t.Fatal("第三方登录没有会话")
 		}
-		socialMe := decode[account.UserProfile](t, f.call("GET", "/v1/me", signed.Session.Token, nil, 200))
+		socialMe := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", signed.Session.Token, nil, http.StatusOK))
 		if socialMe.User.ID != me.User.ID {
 			t.Fatal("同一用户的资源主体发生变化")
 		}
-		unknown := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200))
-		f.callback(unknown, "new-subject", 409)
-		register := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, 200))
-		fresh := f.callback(register, "new-subject", 200)
-		external := decode[account.UserProfile](t, f.call("GET", "/v1/me", fresh.Session.Token, nil, 200))
+		unknown := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, http.StatusOK))
+		f.callback(unknown, "new-subject", http.StatusConflict)
+		register := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, http.StatusOK))
+		fresh := f.callback(register, "new-subject", http.StatusOK)
+		external := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", fresh.Session.Token, nil, http.StatusOK))
 		if external.User.Email != nil || len(external.Accounts) != 1 || external.Accounts[0].Provider == "credential" {
 			t.Fatal("第三方用户创建了占位密码或邮箱")
 		}
 		bobProof := f.reauth(bob.Token, testPassword, "link_account", "demo")
-		conflict := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/me/accounts/link", bob.Token, map[string]any{"provider": "demo", "reauthentication_id": bobProof}, 200))
-		f.callback(conflict, "alice-social", 200)
-		f.call("POST", "/v1/me/accounts/link/confirm", bob.Token, map[string]any{"flow_id": conflict.FlowID}, 409)
+		conflict := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/me/accounts/link", bob.Token, map[string]any{"provider": "demo", "reauthentication_id": bobProof}, http.StatusOK))
+		f.callback(conflict, "alice-social", http.StatusOK)
+		f.call(http.MethodPost, "/v1/me/accounts/link/confirm", bob.Token, map[string]any{"flow_id": conflict.FlowID}, http.StatusConflict)
 	})
 
 	t.Run("改密原子性与即时撤销", func(t *testing.T) {
 		if _, e := f.pool.Exec(ctx, "ALTER TABLE audit_events RENAME TO test_unavailable_audit_events"); e != nil {
 			t.Fatal(e)
 		}
-		f.call("PUT", "/v1/me/password", alice.Token, map[string]any{"current_password": testPassword, "new_password": "a different secure phrase"}, 500)
-		f.call("GET", "/v1/me", alice.Token, nil, 200)
+		f.call(http.MethodPut, "/v1/me/password", alice.Token, map[string]any{"current_password": testPassword, "new_password": "a different secure phrase"}, http.StatusInternalServerError)
+		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusOK)
 		if _, e := f.pool.Exec(ctx, "ALTER TABLE test_unavailable_audit_events RENAME TO audit_events"); e != nil {
 			t.Fatal(e)
 		}
-		f.call("PUT", "/v1/me/password", alice.Token, map[string]any{"current_password": testPassword, "new_password": "a different secure phrase"}, 204)
-		f.call("GET", "/v1/me", alice.Token, nil, 401)
+		f.call(http.MethodPut, "/v1/me/password", alice.Token, map[string]any{"current_password": testPassword, "new_password": "a different secure phrase"}, http.StatusNoContent)
+		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 		alice = f.login("alice@example.com", "a different secure phrase")
 	})
 
 	t.Run("密码恢复与验证用途", func(t *testing.T) {
-		f.call("POST", "/v1/auth/password/forgot", "", map[string]any{"email": "missing@example.com"}, 202)
-		f.call("POST", "/v1/auth/password/forgot", "", map[string]any{"email": "alice@example.com"}, 202)
+		f.call(http.MethodPost, "/v1/auth/password/forgot", "", map[string]any{"email": "missing@example.com"}, http.StatusAccepted)
+		f.call(http.MethodPost, "/v1/auth/password/forgot", "", map[string]any{"email": "alice@example.com"}, http.StatusAccepted)
 		token := f.challenge("alice@example.com", "reset_password")
-		f.call("POST", "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email", "new_password": testPassword}, 422)
-		f.call("POST", "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, 422)
-		f.call("POST", "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "reset_password", "new_password": testPassword}, 204)
-		f.call("GET", "/v1/me", alice.Token, nil, 401)
+		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email", "new_password": testPassword}, http.StatusUnprocessableEntity)
+		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
+		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "reset_password", "new_password": testPassword}, http.StatusNoContent)
+		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 		alice = f.login("alice@example.com", testPassword)
 	})
 	t.Run("邮箱变更与重放", func(t *testing.T) {
 		proof := f.reauth(alice.Token, testPassword, "change_email", "newalice@example.com")
-		f.call("POST", "/v1/me/email", alice.Token, map[string]any{"email": "newalice@example.com", "reauthentication_id": proof}, 202)
+		f.call(http.MethodPost, "/v1/me/email", alice.Token, map[string]any{"email": "newalice@example.com", "reauthentication_id": proof}, http.StatusAccepted)
 		token := f.challenge("newalice@example.com", "change_email")
-		f.call("POST", "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email"}, 204)
-		f.call("GET", "/v1/me", alice.Token, nil, 401)
-		f.call("POST", "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email"}, 422)
+		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email"}, http.StatusNoContent)
+		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
+		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email"}, http.StatusUnprocessableEntity)
 		alice = f.login("newalice@example.com", testPassword)
 	})
 	t.Run("管理员与会话撤销", func(t *testing.T) {
-		bobMe := decode[account.UserProfile](t, f.call("GET", "/v1/me", bob.Token, nil, 200))
+		bobMe := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusOK))
 		if _, e := f.pool.Exec(ctx, "UPDATE users SET role='admin', auth_version=auth_version+1 WHERE id=$1", me.User.ID); e != nil {
 			t.Fatal(e)
 		}
-		f.call("GET", "/v1/me", alice.Token, nil, 401)
+		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 		alice = f.login("newalice@example.com", testPassword)
-		f.call("GET", "/v1/admin/users", alice.Token, nil, 200)
-		f.call("PATCH", "/v1/admin/users/"+bobMe.User.ID.String()+"/status", alice.Token, map[string]any{"status": "disabled"}, 200)
-		f.call("GET", "/v1/me", bob.Token, nil, 401)
-		f.call("PATCH", "/v1/admin/users/"+bobMe.User.ID.String()+"/status", alice.Token, map[string]any{"status": "active"}, 200)
-		f.call("GET", "/v1/me", bob.Token, nil, 401)
+		f.call(http.MethodGet, "/v1/admin/users", alice.Token, nil, http.StatusOK)
+		f.call(http.MethodPatch, "/v1/admin/users/"+bobMe.User.ID.String()+"/status", alice.Token, map[string]any{"status": "disabled"}, http.StatusOK)
+		f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusUnauthorized)
+		f.call(http.MethodPatch, "/v1/admin/users/"+bobMe.User.ID.String()+"/status", alice.Token, map[string]any{"status": "active"}, http.StatusOK)
+		f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusUnauthorized)
 		bob = f.login("bob@example.com", testPassword)
-		f.call("DELETE", "/v1/admin/users/"+bobMe.User.ID.String()+"/sessions", alice.Token, nil, 204)
-		f.call("GET", "/v1/me", bob.Token, nil, 401)
-		f.call("DELETE", "/v1/me/sessions/"+alice.SessionID.String(), alice.Token, nil, 204)
-		f.call("GET", "/v1/me", alice.Token, nil, 401)
+		f.call(http.MethodDelete, "/v1/admin/users/"+bobMe.User.ID.String()+"/sessions", alice.Token, nil, http.StatusNoContent)
+		f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusUnauthorized)
+		f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID.String(), alice.Token, nil, http.StatusNoContent)
+		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 	})
 	var count int
 	if e := f.pool.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE action='account.link' AND outcome='success'").Scan(&count); e != nil || count != 1 {
@@ -168,7 +169,7 @@ func TestChallengeConcurrencyAndSessionExpiry(t *testing.T) {
 	if _, e := f.pool.Exec(ctx, "UPDATE user_sessions SET last_seen_at=now()-interval '2 minutes', idle_expires_at=now()+interval '1 minute' WHERE id=$1", session.SessionID); e != nil {
 		t.Fatal(e)
 	}
-	f.call("GET", "/v1/me", session.Token, nil, 200)
+	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusOK)
 	var remaining float64
 	if e := f.pool.QueryRow(ctx, "SELECT extract(epoch from idle_expires_at-now())::float8 FROM user_sessions WHERE id=$1", session.SessionID).Scan(&remaining); e != nil || remaining < 1700 {
 		t.Fatalf("会话没有续期: %v", e)
@@ -176,62 +177,62 @@ func TestChallengeConcurrencyAndSessionExpiry(t *testing.T) {
 	if _, e := f.pool.Exec(ctx, "UPDATE user_sessions SET idle_expires_at=now()-interval '1 second' WHERE id=$1", session.SessionID); e != nil {
 		t.Fatal(e)
 	}
-	f.call("GET", "/v1/me", session.Token, nil, 401)
+	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusUnauthorized)
 	for i := 0; i < 11; i++ {
-		want := 401
+		want := http.StatusUnauthorized
 		if i == 10 {
-			want = 429
+			want = http.StatusTooManyRequests
 		}
-		f.call("POST", "/v1/auth/login", "", map[string]any{"email": "limited@example.com", "password": "wrong"}, want)
+		f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": "limited@example.com", "password": "wrong"}, want)
 	}
 }
 
 func TestFederatedUserPasswordAndUnlink(t *testing.T) {
 	f := newFixture(t)
 	login := func(purpose string) account.SessionCreateResponse {
-		flow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": purpose}, 200))
-		return *f.callback(flow, "social-only", 200).Session
+		flow := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/auth/oauth/demo", "", map[string]any{"purpose": purpose}, http.StatusOK))
+		return *f.callback(flow, "social-only", http.StatusOK).Session
 	}
 	session := login("register")
-	me := decode[account.UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
+	me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusOK))
 	social := me.Accounts[0].ID
 	proof := func(operation, target string) uuid.UUID {
-		result := decode[account.UserReauthenticateResponse](t, f.call("POST", "/v1/me/reauthenticate", session.Token, map[string]any{
+		result := decode[account.UserReauthenticateResponse](t, f.call(http.MethodPost, "/v1/me/reauthenticate", session.Token, map[string]any{
 			"method": "oauth", "account_id": social, "operation": operation, "target": target,
-		}, 200))
-		return *f.callback(*result.Flow, "social-only", 200).ReauthenticationID
+		}, http.StatusOK))
+		return *f.callback(*result.Flow, "social-only", http.StatusOK).ReauthenticationID
 	}
 	beforeEmail := proof("set_password", "credential")
-	f.call("PUT", "/v1/me/password", session.Token, map[string]any{"new_password": testPassword, "reauthentication_id": beforeEmail}, 422)
+	f.call(http.MethodPut, "/v1/me/password", session.Token, map[string]any{"new_password": testPassword, "reauthentication_id": beforeEmail}, http.StatusUnprocessableEntity)
 	emailProof := proof("change_email", "social@example.com")
-	f.call("POST", "/v1/me/email", session.Token, map[string]any{"email": "social@example.com", "reauthentication_id": emailProof}, 202)
-	f.call("POST", "/v1/auth/verify", "", map[string]any{"token": f.challenge("social@example.com", "change_email"), "purpose": "change_email"}, 204)
-	f.call("GET", "/v1/me", session.Token, nil, 401)
+	f.call(http.MethodPost, "/v1/me/email", session.Token, map[string]any{"email": "social@example.com", "reauthentication_id": emailProof}, http.StatusAccepted)
+	f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": f.challenge("social@example.com", "change_email"), "purpose": "change_email"}, http.StatusNoContent)
+	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusUnauthorized)
 	session = login("login")
-	f.call("POST", "/v1/auth/password/forgot", "", map[string]any{"email": "social@example.com"}, 202)
+	f.call(http.MethodPost, "/v1/auth/password/forgot", "", map[string]any{"email": "social@example.com"}, http.StatusAccepted)
 	var resets int
 	if e := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM auth_verifications WHERE user_id=$1 AND purpose='reset_password'", me.User.ID).Scan(&resets); e != nil || resets != 0 {
 		t.Fatal("恢复流程不能为仅第三方用户创建本地凭据")
 	}
 	passwordProof := proof("set_password", "credential")
-	f.call("PUT", "/v1/me/password", session.Token, map[string]any{"new_password": testPassword, "reauthentication_id": passwordProof}, 204)
-	f.call("GET", "/v1/me", session.Token, nil, 401)
+	f.call(http.MethodPut, "/v1/me/password", session.Token, map[string]any{"new_password": testPassword, "reauthentication_id": passwordProof}, http.StatusNoContent)
+	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusUnauthorized)
 	session = f.login("social@example.com", testPassword)
 	unlinkProof := f.reauth(session.Token, testPassword, "unlink_account", social.String())
-	f.call("POST", "/v1/me/accounts/"+social.String()+"/unlink", session.Token, map[string]any{"reauthentication_id": unlinkProof}, 204)
-	f.call("GET", "/v1/me", session.Token, nil, 401)
+	f.call(http.MethodPost, "/v1/me/accounts/"+social.String()+"/unlink", session.Token, map[string]any{"reauthentication_id": unlinkProof}, http.StatusNoContent)
+	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusUnauthorized)
 	session = f.login("social@example.com", testPassword)
-	me = decode[account.UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
+	me = decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusOK))
 	if len(me.Accounts) != 1 || me.Accounts[0].Provider != "credential" {
 		t.Fatal("解绑后登录方式错误")
 	}
-	f.call("POST", "/v1/me/reauthenticate", session.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID}, 409)
+	f.call(http.MethodPost, "/v1/me/reauthenticate", session.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID}, http.StatusConflict)
 }
 
 func TestLoginCannotRacePasswordChange(t *testing.T) {
 	f := newFixture(t)
 	session := f.register("concurrent@example.com")
-	me := decode[account.UserProfile](t, f.call("GET", "/v1/me", session.Token, nil, 200))
+	me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusOK))
 	original := f.deps.Passwords
 	deps := f.deps
 	verified, resume := make(chan struct{}), make(chan struct{})
@@ -264,35 +265,35 @@ func TestLoginCannotRacePasswordChange(t *testing.T) {
 	if err := <-result; !errors.Is(err, account.ErrCredentials) {
 		t.Fatalf("并发登录未拒绝旧凭据: %v", err)
 	}
-	f.call("GET", "/v1/me", session.Token, nil, 401)
+	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusUnauthorized)
 }
 
 func TestProofTokensUseBodyAndDoNotInvalidateSession(t *testing.T) {
 	f := newFixture(t)
 	session := f.register("session@example.com")
-	f.call("POST", "/v1/auth/register", "", map[string]any{"email": "verify@example.com"}, 202)
+	f.call(http.MethodPost, "/v1/auth/register", "", map[string]any{"email": "verify@example.com"}, http.StatusAccepted)
 	token := f.challenge("verify@example.com", "register")
 	// Authorization 不能作为验证令牌的备用来源。
-	f.call("POST", "/v1/auth/verify", token, map[string]any{"purpose": "register", "new_password": testPassword}, 422)
-	body := f.call("POST", "/v1/auth/verify", session.Token, map[string]any{"token": session.Token, "purpose": "register", "new_password": testPassword}, 422)
+	f.call(http.MethodPost, "/v1/auth/verify", token, map[string]any{"purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
+	body := f.call(http.MethodPost, "/v1/auth/verify", session.Token, map[string]any{"token": session.Token, "purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
 	if safeError(body) != "verification_invalid" || bytes.Contains(body, []byte(session.Token)) {
 		t.Fatal("验证错误缺少稳定提示或泄露令牌")
 	}
-	f.call("POST", "/v1/auth/verify", session.Token, map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, 204)
-	flow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, 200))
+	f.call(http.MethodPost, "/v1/auth/verify", session.Token, map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, http.StatusNoContent)
+	flow := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/auth/oauth/demo", "", map[string]any{"purpose": "register"}, http.StatusOK))
 	u, _ := url.Parse(flow.AuthorizationURL)
-	f.call("POST", "/v1/auth/oauth/callback", flow.Token, map[string]any{"code": "body-subject", "state": u.Query().Get("state")}, 422)
-	body = f.call("POST", "/v1/auth/oauth/callback", session.Token, map[string]any{"token": token, "code": "body-subject", "state": u.Query().Get("state")}, 422)
+	f.call(http.MethodPost, "/v1/auth/oauth/callback", flow.Token, map[string]any{"code": "body-subject", "state": u.Query().Get("state")}, http.StatusUnprocessableEntity)
+	body = f.call(http.MethodPost, "/v1/auth/oauth/callback", session.Token, map[string]any{"token": token, "code": "body-subject", "state": u.Query().Get("state")}, http.StatusUnprocessableEntity)
 	if safeError(body) != "flow_invalid" {
 		t.Fatal("流程错误没有独立语义")
 	}
-	f.call("POST", "/v1/auth/oauth/callback", session.Token, map[string]any{"token": flow.Token, "code": "body-subject", "state": u.Query().Get("state")}, 200)
-	body = f.call("POST", "/v1/me/reauthenticate", session.Token, map[string]any{"method": "password", "password": "wrong", "operation": "link_account", "target": "demo"}, 422)
+	f.call(http.MethodPost, "/v1/auth/oauth/callback", session.Token, map[string]any{"token": flow.Token, "code": "body-subject", "state": u.Query().Get("state")}, http.StatusOK)
+	body = f.call(http.MethodPost, "/v1/me/reauthenticate", session.Token, map[string]any{"method": "password", "password": "wrong", "operation": "link_account", "target": "demo"}, http.StatusUnprocessableEntity)
 	if safeError(body) != "reauthentication_invalid" {
 		t.Fatal("重新认证错误没有独立语义")
 	}
-	f.call("GET", "/v1/me", session.Token, nil, 200)
-	f.call("GET", "/v1/me", flow.Token, nil, 401)
+	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusOK)
+	f.call(http.MethodGet, "/v1/me", flow.Token, nil, http.StatusUnauthorized)
 }
 
 // testFederation 只替换外部第三方，账户流程仍使用真实数据库。

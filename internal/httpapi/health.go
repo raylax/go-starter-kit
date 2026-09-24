@@ -31,7 +31,7 @@ func HealthRoutes() []Route[func(context.Context) error] {
 				Method:      http.MethodGet,
 				Path:        "/health/ready",
 				Tags:        []string{"Health"},
-				Errors:      []int{503},
+				Errors:      []int{http.StatusServiceUnavailable},
 			}),
 			readiness,
 		),

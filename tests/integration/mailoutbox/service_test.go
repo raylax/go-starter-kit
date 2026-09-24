@@ -67,16 +67,16 @@ func TestLeaseOwnershipAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, second := uuid.New(), uuid.New()
-	if _, err := q.ClaimMail(t.Context(), &first); err != nil {
+	if _, err := q.ClaimMail(t.Context(), sqlc.ClaimMailParams{LeaseID: &first, MaxAttempts: 5, LeaseSeconds: 60}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.ClaimMail(t.Context(), &second); err == nil {
+	if _, err := q.ClaimMail(t.Context(), sqlc.ClaimMailParams{LeaseID: &second, MaxAttempts: 5, LeaseSeconds: 60}); err == nil {
 		t.Fatal("同一租约被重复领取")
 	}
 	if _, err := pool.Exec(t.Context(), "UPDATE mail_outbox SET leased_until=now()-interval '1 second'"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.ClaimMail(t.Context(), &second); err != nil {
+	if _, err := q.ClaimMail(t.Context(), sqlc.ClaimMailParams{LeaseID: &second, MaxAttempts: 5, LeaseSeconds: 60}); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := q.CompleteMail(t.Context(), sqlc.CompleteMailParams{ID: id, LeaseID: &first}); err != nil || n != 0 {
@@ -85,7 +85,7 @@ func TestLeaseOwnershipAndExpiry(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), "UPDATE mail_outbox SET leased_until=now()-interval '1 second', expires_at=now()-interval '1 second'"); err != nil {
 		t.Fatal(err)
 	}
-	if err := q.ExpireMail(t.Context()); err != nil {
+	if err := q.ExpireMail(t.Context(), sqlc.ExpireMailParams{MaxAttempts: 5, BatchSize: 100}); err != nil {
 		t.Fatal(err)
 	}
 	var status, body string
@@ -94,5 +94,54 @@ func TestLeaseOwnershipAndExpiry(t *testing.T) {
 	}
 	if mailoutbox.Status(status) != mailoutbox.StatusFailed || body != "" {
 		t.Fatal("过期邮件未终止并清除正文")
+	}
+}
+
+func TestAttemptLimitClearsPayload(t *testing.T) {
+	pool, _ := testutil.Database(t)
+	q := sqlc.New(pool)
+	for _, tc := range []struct {
+		name     string
+		attempts int
+		wantSend bool
+	}{
+		{"最后一次发送失败", 4, true},
+		{"最后一次发送后租约过期", 5, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := uuid.New()
+			if err := q.EnqueueMail(t.Context(), sqlc.EnqueueMailParams{
+				ID: id, Kind: "test", Recipient: "test@example.com", Subject: "private subject",
+				Body: "private body", ExpiresAt: time.Now().Add(time.Hour),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(t.Context(), "UPDATE mail_outbox SET attempts=$2, status='processing', lease_id=$3, leased_until=now()-interval '1 second' WHERE id=$1", id, tc.attempts, uuid.New()); err != nil {
+				t.Fatal(err)
+			}
+			sent := false
+			service, err := mailoutbox.NewService(pool, func(context.Context, mailoutbox.Message) error {
+				sent = true
+				return errors.New("供应商不可用")
+			}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if worked, err := service.ProcessOne(t.Context()); err != nil || worked != tc.wantSend || sent != tc.wantSend {
+				t.Fatalf("投递次数上限未生效: worked=%v sent=%v err=%v", worked, sent, err)
+			}
+			var status, recipient, subject, body string
+			var attempts int
+			var completed bool
+			if err := pool.QueryRow(t.Context(), "SELECT status, recipient, subject, body, attempts, completed_at IS NOT NULL FROM mail_outbox WHERE id=$1", id).Scan(&status, &recipient, &subject, &body, &attempts, &completed); err != nil {
+				t.Fatal(err)
+			}
+			if mailoutbox.Status(status) != mailoutbox.StatusFailed || recipient != "" || subject != "" || body != "" || attempts != 5 || !completed {
+				t.Fatal("达到投递上限后未正确终止或清除敏感载荷")
+			}
+			if worked, err := service.ProcessOne(t.Context()); err != nil || worked {
+				t.Fatalf("终态邮件不应继续领取: worked=%v err=%v", worked, err)
+			}
+		})
 	}
 }

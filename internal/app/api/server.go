@@ -13,6 +13,8 @@ import (
 	"go.uber.org/fx"
 )
 
+const maxRequestHeaderBytes = 32 << 10 // 32 KiB
+
 type httpService struct{}
 
 func newHTTPService(in httpDependencies) *httpService {
@@ -44,7 +46,7 @@ func newHTTPService(in httpDependencies) *httpService {
 			server = &http.Server{
 				Addr: in.Config.HTTPAddr, Handler: handler, ReadHeaderTimeout: 5 * time.Second,
 				ReadTimeout: 10 * time.Second, WriteTimeout: in.Config.RequestTimeout + 5*time.Second,
-				IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10,
+				IdleTimeout: 60 * time.Second, MaxHeaderBytes: maxRequestHeaderBytes,
 				BaseContext: func(net.Listener) context.Context { return lifetime },
 				ErrorLog:    slog.NewLogLogger(in.Logger.Handler(), slog.LevelError),
 			}

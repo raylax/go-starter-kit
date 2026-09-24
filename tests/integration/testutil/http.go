@@ -61,7 +61,7 @@ func Request(t *testing.T) func(*httptest.Server, string, string, string, bool, 
 		if response.StatusCode != want {
 			t.Fatalf("%s %s: got %d want %d: %s", method, path, response.StatusCode, want, data)
 		}
-		if want >= 400 && !strings.HasPrefix(response.Header.Get("Content-Type"), "application/problem+json") {
+		if want >= http.StatusBadRequest && !strings.HasPrefix(response.Header.Get("Content-Type"), "application/problem+json") {
 			t.Fatalf("invalid error content type: %s", response.Header.Get("Content-Type"))
 		}
 		return data

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -101,7 +102,7 @@ func TestPageResponseAdapter(t *testing.T) {
 			router := chi.NewRouter()
 			api := humachi.New(router, huma.DefaultConfig("分页测试", "1"))
 			route.Bind(api, struct{}{})
-			schema := api.OpenAPI().Paths["/page"].Get.Responses["200"].Content["application/json"].Schema
+			schema := api.OpenAPI().Paths["/page"].Get.Responses[strconv.Itoa(http.StatusOK)].Content["application/json"].Schema
 			if schema.Ref != "#/components/schemas/ResponsePage" {
 				t.Fatalf("具名分页 schema 丢失：%s", schema.Ref)
 			}

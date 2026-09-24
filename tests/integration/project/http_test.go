@@ -25,16 +25,16 @@ func TestProjectCRUD(t *testing.T) {
 	}
 	alice, bob := newServer("alice", 5*time.Second), newServer("bob", 5*time.Second)
 	request := testutil.Request(t)
-	request(alice, "GET", "/v1/projects", "", false, 401)
-	request(alice, "POST", "/v1/projects", `{"name":"   "}`, true, 422)
-	request(alice, "POST", "/v1/projects", `{"name":"x","unknown":1}`, true, 422)
-	request(alice, "POST", "/v1/projects", `{`, true, 400)
-	request(alice, "POST", "/v1/projects", `{"name":"`+strings.Repeat("a", (1<<20)+1)+`"}`, true, 413)
-	request(alice, "GET", "/v1/projects?limit=101", "", true, 422)
-	request(alice, "GET", "/v1/projects?limit=0", "", true, 422)
-	request(alice, "GET", "/v1/projects?unexpected=1", "", true, 422)
-	request(alice, "GET", "/v1/projects/not-a-uuid", "", true, 422)
-	created := request(alice, "POST", "/v1/projects", `{"name":"  中文项目  ","description":"first"}`, true, 201)
+	request(alice, http.MethodGet, "/v1/projects", "", false, http.StatusUnauthorized)
+	request(alice, http.MethodPost, "/v1/projects", `{"name":"   "}`, true, http.StatusUnprocessableEntity)
+	request(alice, http.MethodPost, "/v1/projects", `{"name":"x","unknown":1}`, true, http.StatusUnprocessableEntity)
+	request(alice, http.MethodPost, "/v1/projects", `{`, true, http.StatusBadRequest)
+	request(alice, http.MethodPost, "/v1/projects", `{"name":"`+strings.Repeat("a", (1<<20)+1)+`"}`, true, http.StatusRequestEntityTooLarge)
+	request(alice, http.MethodGet, "/v1/projects?limit=101", "", true, http.StatusUnprocessableEntity)
+	request(alice, http.MethodGet, "/v1/projects?limit=0", "", true, http.StatusUnprocessableEntity)
+	request(alice, http.MethodGet, "/v1/projects?unexpected=1", "", true, http.StatusUnprocessableEntity)
+	request(alice, http.MethodGet, "/v1/projects/not-a-uuid", "", true, http.StatusUnprocessableEntity)
+	created := request(alice, http.MethodPost, "/v1/projects", `{"name":"  中文项目  ","description":"first"}`, true, http.StatusCreated)
 	var item project.Project
 	if err := json.Unmarshal(created, &item); err != nil {
 		t.Fatal(err)
@@ -49,24 +49,24 @@ func TestProjectCRUD(t *testing.T) {
 		t.Fatal("database owner field leaked")
 	}
 	path := "/v1/projects/" + item.ID.String()
-	request(alice, "GET", path, "", true, 200)
-	request(alice, "POST", "/v1/projects", `{"name":"中文项目"}`, true, 409)
-	request(bob, "GET", path, "", true, 404)
-	request(bob, "PUT", path, `{"name":"stolen"}`, true, 404)
-	request(bob, "DELETE", path, "", true, 404)
-	otherList := request(bob, "GET", "/v1/projects", "", true, 200)
+	request(alice, http.MethodGet, path, "", true, http.StatusOK)
+	request(alice, http.MethodPost, "/v1/projects", `{"name":"中文项目"}`, true, http.StatusConflict)
+	request(bob, http.MethodGet, path, "", true, http.StatusNotFound)
+	request(bob, http.MethodPut, path, `{"name":"stolen"}`, true, http.StatusNotFound)
+	request(bob, http.MethodDelete, path, "", true, http.StatusNotFound)
+	otherList := request(bob, http.MethodGet, "/v1/projects", "", true, http.StatusOK)
 	if !strings.Contains(string(otherList), `"items":[]`) {
 		t.Fatalf("expected empty isolated list: %s", otherList)
 	}
-	request(bob, "POST", "/v1/projects", `{"name":"中文项目"}`, true, 201)
-	request(alice, "POST", "/v1/projects", `{"name":"second"}`, true, 201)
-	request(alice, "PUT", path, `{"name":"second"}`, true, 409)
-	updated := request(alice, "PUT", path, `{"name":"updated","description":"changed"}`, true, 200)
+	request(bob, http.MethodPost, "/v1/projects", `{"name":"中文项目"}`, true, http.StatusCreated)
+	request(alice, http.MethodPost, "/v1/projects", `{"name":"second"}`, true, http.StatusCreated)
+	request(alice, http.MethodPut, path, `{"name":"second"}`, true, http.StatusConflict)
+	updated := request(alice, http.MethodPut, path, `{"name":"updated","description":"changed"}`, true, http.StatusOK)
 	if !strings.Contains(string(updated), `"description":"changed"`) {
 		t.Fatalf("update not persisted: %s", updated)
 	}
-	firstPage := request(alice, "GET", "/v1/projects?limit=1", "", true, 200)
-	secondPage := request(alice, "GET", "/v1/projects?limit=1&offset=1", "", true, 200)
+	firstPage := request(alice, http.MethodGet, "/v1/projects?limit=1", "", true, http.StatusOK)
+	secondPage := request(alice, http.MethodGet, "/v1/projects?limit=1&offset=1", "", true, http.StatusOK)
 	var page1, page2 struct {
 		Items   []project.Project `json:"items"`
 		HasMore bool              `json:"has_more"`
@@ -86,7 +86,7 @@ func TestProjectCRUD(t *testing.T) {
 		statuses := make(chan int, 2)
 		for range 2 {
 			group.Go(func() {
-				req, err := http.NewRequestWithContext(t.Context(), "POST", alice.URL+"/v1/projects", strings.NewReader(`{"name":"concurrent"}`))
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, alice.URL+"/v1/projects", strings.NewReader(`{"name":"concurrent"}`))
 				if err != nil {
 					t.Error(err)
 					return
@@ -109,7 +109,7 @@ func TestProjectCRUD(t *testing.T) {
 		for status := range statuses {
 			counts[status]++
 		}
-		if counts[201] != 1 || counts[409] != 1 {
+		if counts[http.StatusCreated] != 1 || counts[http.StatusConflict] != 1 {
 			t.Fatalf("unexpected outcomes: %v", counts)
 		}
 	})
@@ -124,10 +124,10 @@ func TestProjectCRUD(t *testing.T) {
 			t.Fatal(err)
 		}
 		short := newServer("alice", 100*time.Millisecond)
-		request(short, "PUT", path, `{"name":"blocked"}`, true, 504)
+		request(short, http.MethodPut, path, `{"name":"blocked"}`, true, http.StatusGatewayTimeout)
 	})
-	request(alice, "DELETE", path, "", true, 204)
-	request(alice, "GET", path, "", true, 404)
-	request(alice, "DELETE", path, "", true, 404)
+	request(alice, http.MethodDelete, path, "", true, http.StatusNoContent)
+	request(alice, http.MethodGet, path, "", true, http.StatusNotFound)
+	request(alice, http.MethodDelete, path, "", true, http.StatusNotFound)
 
 }

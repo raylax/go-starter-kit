@@ -22,16 +22,16 @@ func TestVerifyClassifiesFailuresWithoutExposingProofs(t *testing.T) {
 		want              error
 	}{
 		{name: "交换网络故障", stage: "token", network: true, want: ErrUnavailable},
-		{name: "交换服务故障", stage: "token", status: 503, body: secret, want: ErrUnavailable},
-		{name: "交换限流", stage: "token", status: 429, body: secret, want: ErrUnavailable},
-		{name: "无效授权码", stage: "token", status: 400, body: `{"error":"invalid_grant","error_description":"` + secret + `"}`, want: ErrProof},
-		{name: "GitHub 无效授权码", stage: "token", status: 200, body: `{"error":"bad_verification_code","error_description":"` + secret + `"}`, want: ErrProof},
-		{name: "客户端配置错误", stage: "token", status: 401, body: `{"error":"invalid_client","error_description":"` + secret + `"}`, want: ErrUnavailable},
-		{name: "用户服务故障", stage: "user", status: 503, body: secret, want: ErrUnavailable},
-		{name: "用户限流", stage: "user", status: 403, body: secret, want: ErrUnavailable},
-		{name: "用户凭据失效", stage: "user", status: 401, body: secret, want: ErrProof},
-		{name: "用户响应损坏", stage: "user", status: 200, body: secret, want: ErrUnavailable},
-		{name: "成功", stage: "user", status: 200, body: `{"id":123,"login":"tester"}`},
+		{name: "交换服务故障", stage: "token", status: http.StatusServiceUnavailable, body: secret, want: ErrUnavailable},
+		{name: "交换限流", stage: "token", status: http.StatusTooManyRequests, body: secret, want: ErrUnavailable},
+		{name: "无效授权码", stage: "token", status: http.StatusBadRequest, body: `{"error":"invalid_grant","error_description":"` + secret + `"}`, want: ErrProof},
+		{name: "GitHub 无效授权码", stage: "token", status: http.StatusOK, body: `{"error":"bad_verification_code","error_description":"` + secret + `"}`, want: ErrProof},
+		{name: "客户端配置错误", stage: "token", status: http.StatusUnauthorized, body: `{"error":"invalid_client","error_description":"` + secret + `"}`, want: ErrUnavailable},
+		{name: "用户服务故障", stage: "user", status: http.StatusServiceUnavailable, body: secret, want: ErrUnavailable},
+		{name: "用户限流", stage: "user", status: http.StatusForbidden, body: secret, want: ErrUnavailable},
+		{name: "用户凭据失效", stage: "user", status: http.StatusUnauthorized, body: secret, want: ErrProof},
+		{name: "用户响应损坏", stage: "user", status: http.StatusOK, body: secret, want: ErrUnavailable},
+		{name: "成功", stage: "user", status: http.StatusOK, body: `{"id":123,"login":"tester"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, err := New([]Config{{ID: "github", Protocol: ProtocolGitHub, ClientID: "test", ClientSecret: "test-only", RedirectURI: "https://example.com/auth/callback"}})
@@ -41,7 +41,7 @@ func TestVerifyClassifiesFailuresWithoutExposingProofs(t *testing.T) {
 			r.client.Transport = testTransport(func(req *http.Request) (*http.Response, error) {
 				status, body := tc.status, tc.body
 				if tc.stage == "user" && req.URL.Host == "github.com" {
-					status = 200
+					status = http.StatusOK
 					body = `{"access_token":"test-only","token_type":"bearer"}`
 				} else if tc.network {
 					return nil, errors.New(secret)

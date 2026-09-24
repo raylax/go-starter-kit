@@ -1,6 +1,7 @@
 # 仓库约定
 
 - 使用 `any` 和 `...any`，禁止旧的空接口写法。`make fmt` 统一格式，`make lint` 检查此约定，包括生成的 Go 代码。
+- HTTP 状态码与方法使用 `net/http` 的具名常量，测试同样遵守。业务限制、容量上限、协议长度和重试策略在所属模块就近定义常量，能推导的值通过计算得到；容量常量用名称说明用途与字节单位，并标注 KiB/MiB，不在调用处内联位移表达式，即使目标字段已有名称。普通计数和测试样例无需机械创建常量。结构标签保留静态字面量，并与业务规则同步维护。
 - 注释和说明文档使用中文；Go 标识符保留英文。生成器标记、工具指令和第三方固定文本按工具要求保留。
 - `cmd/api/main.go` 与 `cmd/worker/main.go` 只处理进程信号、执行命令树和退出码；Cobra 命令定义在各自 `internal/app/<入口>/command.go`。应用实现统一放在 `internal/`。
 - `internal/app/api/` 负责配置、依赖装配、路由清单和生命周期；`internal/httpapi/` 负责 HTTP 公共能力；`internal/identity/` 负责随机令牌、格式校验和摘要，不依赖数据库、应用配置或 HTTP 处理器；会话与用户有效性由 `modules/account` 校验，`app` 适配认证接口；`internal/db/` 管理数据库连接、迁移与查询；`internal/platform/` 提供遥测基础设施。

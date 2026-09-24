@@ -29,6 +29,13 @@ const (
 
 func (p Protocol) Valid() bool { return p == ProtocolGitHub }
 
+const (
+	maxAuthorizationCodeBytes = 8 << 10 // 8 KiB
+	maxUserResponseBytes      = 1 << 20 // 1 MiB
+	githubIdentityNamespace   = "https://api.github.com"
+	githubUserEndpoint        = githubIdentityNamespace + "/user"
+)
+
 type Config struct {
 	ID               string   `json:"id"`
 	Protocol         Protocol `json:"protocol"`
@@ -104,14 +111,14 @@ func (r *Registry) Verify(ctx context.Context, id, version, code, verifier strin
 	if e != nil {
 		return Verified{}, e
 	}
-	if p.version != version || code == "" || len(code) > 8192 {
+	if p.version != version || code == "" || len(code) > maxAuthorizationCodeBytes {
 		return Verified{}, ErrProof
 	}
 	token, e := c.Exchange(r.context(ctx), code, oauth2.VerifierOption(verifier))
 	if e != nil {
 		return Verified{}, exchangeError(ctx, e)
 	}
-	req, e := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+	req, e := http.NewRequestWithContext(ctx, http.MethodGet, githubUserEndpoint, nil)
 	if e != nil {
 		return Verified{}, ErrProof
 	}
@@ -132,13 +139,13 @@ func (r *Registry) Verify(ctx context.Context, id, version, code, verifier strin
 		ID    int64  `json:"id"`
 		Login string `json:"login"`
 	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&user); err != nil {
+	if err := json.NewDecoder(io.LimitReader(res.Body, maxUserResponseBytes)).Decode(&user); err != nil {
 		return Verified{}, dependencyError(ctx, err)
 	}
 	if user.ID <= 0 {
 		return Verified{}, ErrUnavailable
 	}
-	return Verified{Namespace: "https://api.github.com", Subject: strconv.FormatInt(user.ID, 10), Name: user.Login}, nil
+	return Verified{Namespace: githubIdentityNamespace, Subject: strconv.FormatInt(user.ID, 10), Name: user.Login}, nil
 }
 
 // unavailableCause 保留底层链用于分类，日志文本始终使用固定脱敏提示。
@@ -158,7 +165,7 @@ func exchangeError(ctx context.Context, err error) error {
 	}
 	var rejected *oauth2.RetrieveError
 	if errors.As(err, &rejected) {
-		if rejected.Response != nil && (rejected.Response.StatusCode >= 500 || rejected.Response.StatusCode == http.StatusTooManyRequests) {
+		if rejected.Response != nil && (rejected.Response.StatusCode >= http.StatusInternalServerError || rejected.Response.StatusCode == http.StatusTooManyRequests) {
 			return dependencyError(ctx, err)
 		}
 		switch rejected.ErrorCode {

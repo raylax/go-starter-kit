@@ -23,13 +23,13 @@ func TestHTTPInfrastructure(t *testing.T) {
 		method, path string
 		status       int
 	}{
-		{http.MethodGet, "/health/live", 200},
-		{http.MethodGet, "/health/ready", 503},
-		{http.MethodGet, "/v1/projects", 401},
-		{http.MethodGet, "/does-not-exist", 404},
-		{http.MethodPost, "/health/live", 405},
-		{http.MethodGet, "/docs", 404},
-		{http.MethodGet, "/openapi.json", 404},
+		{http.MethodGet, "/health/live", http.StatusOK},
+		{http.MethodGet, "/health/ready", http.StatusServiceUnavailable},
+		{http.MethodGet, "/v1/projects", http.StatusUnauthorized},
+		{http.MethodGet, "/does-not-exist", http.StatusNotFound},
+		{http.MethodPost, "/health/live", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/docs", http.StatusNotFound},
+		{http.MethodGet, "/openapi.json", http.StatusNotFound},
 	} {
 		t.Run(tc.method+tc.path, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
@@ -40,7 +40,7 @@ func TestHTTPInfrastructure(t *testing.T) {
 			if recorder.Header().Get("X-Request-ID") == "" {
 				t.Fatal("missing request ID")
 			}
-			if tc.status >= 400 && recorder.Header().Get("Content-Type") != "application/problem+json" {
+			if tc.status >= http.StatusBadRequest && recorder.Header().Get("Content-Type") != "application/problem+json" {
 				t.Fatalf("unexpected error format: %s", recorder.Header().Get("Content-Type"))
 			}
 		})
@@ -54,15 +54,15 @@ func TestAuthenticationErrorResponses(t *testing.T) {
 		status    int
 		challenge bool
 	}{
-		{"invalid", identity.ErrUnauthorized, 401, true},
-		{"deadline", context.DeadlineExceeded, 504, false},
-		{"dependency", errors.New("dependency unavailable"), 503, false},
+		{"invalid", identity.ErrUnauthorized, http.StatusUnauthorized, true},
+		{"deadline", context.DeadlineExceeded, http.StatusGatewayTimeout, false},
+		{"dependency", errors.New("dependency unavailable"), http.StatusServiceUnavailable, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := testHandler(t, Config{RequestTimeout: time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)), failingAuthenticator{tc.err}, func(context.Context) error { return nil })
 			for _, path := range []string{"/v1/projects", "/v1/tasks"} {
 				r := httptest.NewRecorder()
-				req := httptest.NewRequest("GET", path, nil)
+				req := httptest.NewRequest(http.MethodGet, path, nil)
 				req.Header.Set("Authorization", "Bearer test-token")
 				h.ServeHTTP(r, req)
 				if r.Code != tc.status || (r.Header().Get("WWW-Authenticate") != "") != tc.challenge {
@@ -82,17 +82,17 @@ func TestMethodNotAllowedIncludesAllowedMethods(t *testing.T) {
 		path    string
 		methods []string
 	}{
-		{"/health/live", []string{"GET"}},
-		{"/v1/tasks", []string{"GET", "POST"}},
-		{"/v1/projects/00000000-0000-0000-0000-000000000001", []string{"GET", "PUT", "DELETE"}},
-		{"/openapi.json", []string{"GET"}},
+		{"/health/live", []string{http.MethodGet}},
+		{"/v1/tasks", []string{http.MethodGet, http.MethodPost}},
+		{"/v1/projects/00000000-0000-0000-0000-000000000001", []string{http.MethodGet, http.MethodPut, http.MethodDelete}},
+		{"/openapi.json", []string{http.MethodGet}},
 	} {
 		r := httptest.NewRecorder()
-		h.ServeHTTP(r, httptest.NewRequest("PATCH", tc.path, nil))
+		h.ServeHTTP(r, httptest.NewRequest(http.MethodPatch, tc.path, nil))
 		got := strings.FieldsFunc(strings.Join(r.Header().Values("Allow"), ","), func(r rune) bool { return r == ',' || r == ' ' })
 		slices.Sort(got)
 		slices.Sort(tc.methods)
-		if r.Code != 405 || !slices.Equal(got, tc.methods) {
+		if r.Code != http.StatusMethodNotAllowed || !slices.Equal(got, tc.methods) {
 			t.Fatalf("%s: status=%d Allow=%v want=%v", tc.path, r.Code, got, tc.methods)
 		}
 		if r.Header().Get("Content-Type") != "application/problem+json" {

@@ -6,7 +6,6 @@ import (
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/jackc/pgx/v5"
-	"time"
 )
 
 func (s *Service) Register(ctx context.Context, r Request, email string) error {
@@ -29,7 +28,7 @@ func (s *Service) Register(ctx context.Context, r Request, email string) error {
 		if UserStatus(u.Status) != UserPending {
 			return nil
 		}
-		_, e = s.createChallenge(ctx, q, u, VerifyRegister, email, 24*time.Hour, nil, nil)
+		_, e = s.createChallenge(ctx, q, u, VerifyRegister, email, registrationChallengeTTL, nil, nil)
 		return e
 	})
 }
@@ -64,7 +63,7 @@ func (s *Service) ForgotPassword(ctx context.Context, r Request, email string) e
 			return e
 		}
 		// 邮箱和版本来自同一次读取；并发变更可让挑战失效，由消费时复核。
-		_, e = s.createChallenge(ctx, q, u, VerifyResetPassword, text(u.EmailNormalized), 15*time.Minute, nil, nil)
+		_, e = s.createChallenge(ctx, q, u, VerifyResetPassword, text(u.EmailNormalized), passwordResetChallengeTTL, nil, nil)
 		return e
 	})
 }

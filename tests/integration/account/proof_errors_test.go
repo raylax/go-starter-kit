@@ -9,6 +9,7 @@ import (
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/example/go-starter-kit/internal/modules/account"
 	"github.com/jackc/pgx/v5"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func TestConcurrentEmailProofReturnsReauthenticationError(t *testing.T) {
 		if !errors.As(mapped, &status) {
 			t.Fatal(mapped)
 		}
-		if status.GetStatus() != 422 || !errors.Is(err, account.ErrReauthentication) {
+		if status.GetStatus() != http.StatusUnprocessableEntity || !errors.Is(err, account.ErrReauthentication) {
 			t.Errorf("证明认领竞争应返回 422，实际为 %d", status.GetStatus())
 		}
 	}
@@ -120,8 +121,8 @@ func TestConfirmLinkRetryPreservesLookupErrors(t *testing.T) {
 	session := f.register("confirm-retry@example.com")
 	r := fixtureSubject(t, f, session.Token)
 	proof := f.reauth(session.Token, testPassword, "link_account", "demo")
-	flow := decode[account.AuthFlowResponse](t, f.call("POST", "/v1/me/accounts/link", session.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, 200))
-	f.callback(flow, "confirm-retry-social", 200)
+	flow := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/me/accounts/link", session.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, http.StatusOK))
+	f.callback(flow, "confirm-retry-social", http.StatusOK)
 	if err := f.s.ConfirmLink(t.Context(), r, flow.FlowID); err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +131,9 @@ func TestConfirmLinkRetryPreservesLookupErrors(t *testing.T) {
 		cause  error
 		status int
 	}{
-		{"查询超时", context.DeadlineExceeded, 504},
-		{"存储故障", errors.New("数据库连接中断"), 500},
-		{"账号不存在", pgx.ErrNoRows, 422},
+		{"查询超时", context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{"存储故障", errors.New("数据库连接中断"), http.StatusInternalServerError},
+		{"账号不存在", pgx.ErrNoRows, http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service := f.newService(accountLookupFailureDatabase{Database: f.pool, cause: tc.cause}, f.deps)

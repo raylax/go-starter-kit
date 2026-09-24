@@ -67,7 +67,7 @@ func TestServerLifecycle(t *testing.T) {
 		if e == nil {
 			_, _ = io.Copy(io.Discard, res.Body)
 			res.Body.Close()
-			if res.StatusCode == 200 {
+			if res.StatusCode == http.StatusOK {
 				ready = true
 				break
 			}
@@ -92,13 +92,13 @@ func TestServerLifecycle(t *testing.T) {
 	}
 	response := make(chan error, 1)
 	go func() {
-		req, _ := http.NewRequestWithContext(t.Context(), "GET", "http://"+addr+"/v1/tasks", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/v1/tasks", nil)
 		req.Header.Set("Authorization", "Bearer "+token)
 		res, e := client.Do(req)
 		if e == nil {
 			_, _ = io.Copy(io.Discard, res.Body)
 			res.Body.Close()
-			if res.StatusCode != 200 {
+			if res.StatusCode != http.StatusOK {
 				e = fmt.Errorf("在途请求状态 %d", res.StatusCode)
 			}
 		}

@@ -12,18 +12,29 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const (
+	maxDeliveryAttempts  = 5
+	leaseDuration        = time.Minute
+	expiredMailBatchSize = 100
+	databaseTimeout      = 5 * time.Second
+	sendTimeout          = 10 * time.Second
+	leaseFinishReserve   = 5 * time.Second
+	retryBaseSeconds     = 15
+	retryJitterSeconds   = 10
+)
+
 // ProcessOne 原子领取一封邮件，在数据库事务外发送。租约标识防止过期消费者覆盖新状态。
 func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	queryCtx, cancel := context.WithTimeout(ctx, databaseTimeout)
 	defer cancel()
-	if err := s.queries.ExpireMail(queryCtx); err != nil {
+	if err := s.queries.ExpireMail(queryCtx, sqlc.ExpireMailParams{MaxAttempts: maxDeliveryAttempts, BatchSize: expiredMailBatchSize}); err != nil {
 		return false, err
 	}
 	lease, err := uuid.NewRandom()
 	if err != nil {
 		return false, err
 	}
-	row, err := s.queries.ClaimMail(queryCtx, &lease)
+	row, err := s.queries.ClaimMail(queryCtx, sqlc.ClaimMailParams{LeaseID: &lease, MaxAttempts: maxDeliveryAttempts, LeaseSeconds: int64(leaseDuration / time.Second)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -40,11 +51,11 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 // deliver 限定外部发送时间，始终在数据库事务外执行。
 func (s *Service) deliver(ctx context.Context, row sqlc.MailOutbox) error {
 	// 单次发送期限早于租约到期，并且不超过邮件本身的有效期。
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(sendTimeout)
 	if row.ExpiresAt.Before(deadline) {
 		deadline = row.ExpiresAt
 	}
-	if limit := row.LeasedUntil.Add(-5 * time.Second); limit.Before(deadline) {
+	if limit := row.LeasedUntil.Add(-leaseFinishReserve); limit.Before(deadline) {
 		deadline = limit
 	}
 	sendCtx, stop := context.WithDeadline(ctx, deadline)
@@ -59,7 +70,7 @@ func (s *Service) deliver(ctx context.Context, row sqlc.MailOutbox) error {
 // finishDelivery 在停机取消后仍有机会落库；租约过期时由其他消费者恢复。
 func (s *Service) finishDelivery(ctx context.Context, row sqlc.MailOutbox, lease uuid.UUID, sendErr error) error {
 	// 停机时仍尝试完成本次状态更新，失败则依靠租约过期恢复。
-	finishCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	finishCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), databaseTimeout)
 	defer finish()
 	var count int64
 	var err error
@@ -67,7 +78,7 @@ func (s *Service) finishDelivery(ctx context.Context, row sqlc.MailOutbox, lease
 		count, err = s.queries.CompleteMail(finishCtx, sqlc.CompleteMailParams{ID: row.ID, LeaseID: &lease})
 	} else {
 		delay := retryDelaySeconds(row.Attempts)
-		count, err = s.queries.RetryMail(finishCtx, sqlc.RetryMailParams{ID: row.ID, LeaseID: &lease, DelaySeconds: delay})
+		count, err = s.queries.RetryMail(finishCtx, sqlc.RetryMailParams{ID: row.ID, LeaseID: &lease, DelaySeconds: delay, MaxAttempts: maxDeliveryAttempts})
 		s.logger.WarnContext(ctx, "邮件投递失败", "message_id", row.ID, "attempt", row.Attempts)
 	}
 	if err != nil {
@@ -84,8 +95,8 @@ func retryDelaySeconds(attempt int32) int64 {
 	if attempt < 1 {
 		attempt = 1
 	}
-	if attempt > 5 {
-		attempt = 5
+	if attempt > maxDeliveryAttempts {
+		attempt = maxDeliveryAttempts
 	}
-	return int64(15*(1<<uint(attempt-1))) + int64(rand.IntN(10))
+	return int64(retryBaseSeconds*(1<<uint(attempt-1))) + int64(rand.IntN(retryJitterSeconds))
 }

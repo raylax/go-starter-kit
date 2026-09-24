@@ -12,6 +12,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// 字符数上限与 dto.go 的 maxLength 标签保持一致。
+const (
+	maxNameRunes        = 100
+	maxDescriptionRunes = 2000
+)
+
 var storageErrors = db.ErrorPolicy{Resource: "project", NotFound: ErrNotFound, UniqueConstraints: map[string]*apperror.Error{"projects_owner_name_key": ErrConflict}}
 
 type Service struct{ queries *sqlc.Queries }
@@ -80,8 +86,8 @@ func (s *Service) Delete(ctx context.Context, owner string, id uuid.UUID) error 
 }
 
 func validate(name, description string) (string, error) {
-	name, valid := validation.RequiredText(name, 100)
-	if !valid || !validation.TextWithin(description, 2000) {
+	name, valid := validation.RequiredText(name, maxNameRunes)
+	if !valid || !validation.TextWithin(description, maxDescriptionRunes) {
 		return "", ErrInvalid
 	}
 	return name, nil

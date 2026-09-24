@@ -10,6 +10,9 @@ import (
 	"go.uber.org/fx/fxevent"
 )
 
+// 为服务排空后的数据库和遥测关闭预留时间。
+const infrastructureShutdownGrace = 10 * time.Second
+
 // Failures 将后台服务的异常退出交给应用入口处理。
 type Failures struct{ events chan error }
 
@@ -37,7 +40,7 @@ func Run(ctx context.Context, cfg Config, options ...fx.Option) error {
 			events := &fxevent.SlogLogger{Logger: logger}
 			events.UseLogLevel(slog.LevelDebug)
 			return events
-		}), fx.StopTimeout(cfg.ShutdownTimeout + 10*time.Second)}, options...)
+		}), fx.StopTimeout(cfg.ShutdownTimeout + infrastructureShutdownGrace)}, options...)
 	app := fx.New(options...)
 	if err := app.Err(); err != nil {
 		return err

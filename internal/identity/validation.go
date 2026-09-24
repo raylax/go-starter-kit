@@ -8,13 +8,15 @@ import (
 	"github.com/example/go-starter-kit/internal/apperror"
 )
 
+const maxSubjectBytes = 255
+
 var (
 	ErrInvalidSubject = errors.New("subject must contain 1-255 bytes and not be blank")
 )
 
 // ValidateSubject 统一主体格式：非空白、有效 UTF-8、无 NUL，最多 255 字节。
 func ValidateSubject(subject string) error {
-	if strings.TrimSpace(subject) == "" || len(subject) > 255 || !utf8.ValidString(subject) || strings.ContainsRune(subject, '\x00') {
+	if strings.TrimSpace(subject) == "" || len(subject) > maxSubjectBytes || !utf8.ValidString(subject) || strings.ContainsRune(subject, '\x00') {
 		return ErrInvalidSubject
 	}
 	return nil

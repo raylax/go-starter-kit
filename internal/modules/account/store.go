@@ -14,6 +14,15 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	maxAuditActionRunes     = 100
+	maxAuditMetadataBytes   = 8 << 10 // 8 KiB
+	maxMailKindBytes        = 64
+	maxMailSubjectBytes     = 998
+	maxMailBodyBytes        = 64 << 10 // 64 KiB
+	securityNotificationTTL = 24 * time.Hour
+)
+
 // store 在账户模块的写入入口维护字段和组合规则，SQL 仅负责持久化与并发约束。
 // 固定角色 user、初始版本 1、状态转换和恢复开关由专用写入操作构造，调用方不能任意设置。
 type store struct{ rawQueries *sqlc.Queries }
@@ -41,7 +50,7 @@ func (q *store) CreatePendingUser(ctx context.Context, p sqlc.CreatePendingUserP
 }
 
 func (q *store) CreateFederatedUser(ctx context.Context, name string) (sqlc.User, error) {
-	if !validation.TextWithin(name, 100) {
+	if !validation.TextWithin(name, maxDisplayNameRunes) {
 		return sqlc.User{}, ErrInvalid
 	}
 	return q.rawQueries.CreateFederatedUser(ctx, sqlc.CreateFederatedUserParams{ID: uuid.New(), DisplayName: name})
@@ -67,7 +76,7 @@ func (q *store) UpdateUserEmail(ctx context.Context, p sqlc.UpdateUserEmailParam
 }
 
 func (q *store) UpdateUserProfile(ctx context.Context, p sqlc.UpdateUserProfileParams) (sqlc.User, error) {
-	if !validation.TextWithin(p.DisplayName, 100) {
+	if !validation.TextWithin(p.DisplayName, maxDisplayNameRunes) {
 		return sqlc.User{}, ErrInvalid
 	}
 	return q.rawQueries.UpdateUserProfile(ctx, p)
@@ -81,7 +90,7 @@ func (q *store) SetUserStatus(ctx context.Context, p sqlc.SetUserStatusParams) (
 }
 
 func (q *store) CreateAccount(ctx context.Context, p sqlc.CreateAccountParams) (sqlc.Account, error) {
-	if p.UserID == uuid.Nil || p.ProviderID == "" || !validation.TextWithin(p.ProviderID, 64) || !validBytes(p.ProviderAccountID, 1024) || !validBytes(p.ProviderNamespace, 2048) {
+	if p.UserID == uuid.Nil || p.ProviderID == "" || !validation.TextWithin(p.ProviderID, maxProviderIDRunes) || !validBytes(p.ProviderAccountID, maxProviderSubjectBytes) || !validBytes(p.ProviderNamespace, maxProviderNamespaceBytes) {
 		return sqlc.Account{}, ErrInvalid
 	}
 	if p.ProviderID == CredentialProvider {
@@ -159,7 +168,7 @@ func (q *store) RateLimit(ctx context.Context, p sqlc.RateLimitParams) (sqlc.Rat
 }
 
 func (q *store) AppendAudit(ctx context.Context, p sqlc.AppendAuditParams) error {
-	if p.Action == "" || !validation.TextWithin(p.Action, 100) || !AuditOutcome(p.Outcome).Valid() || !AuditActorType(p.ActorType).Valid() {
+	if p.Action == "" || !validation.TextWithin(p.Action, maxAuditActionRunes) || !AuditOutcome(p.Outcome).Valid() || !AuditActorType(p.ActorType).Valid() {
 		return ErrInvalid
 	}
 	if (AuditActorType(p.ActorType) == ActorAnonymous) != (p.ActorID == nil) {
@@ -170,7 +179,7 @@ func (q *store) AppendAudit(ctx context.Context, p sqlc.AppendAuditParams) error
 	}
 	// 以实际发送的 JSON 字节数限制大小；禁止数组、标量与 null。
 	var metadata map[string]json.RawMessage
-	if len(p.Metadata) > 8192 || json.Unmarshal(p.Metadata, &metadata) != nil || metadata == nil {
+	if len(p.Metadata) > maxAuditMetadataBytes || json.Unmarshal(p.Metadata, &metadata) != nil || metadata == nil {
 		return ErrInvalid
 	}
 	p.ID = uuid.New()
@@ -179,7 +188,7 @@ func (q *store) AppendAudit(ctx context.Context, p sqlc.AppendAuditParams) error
 
 // EnqueueMail 校验队列载荷，队列写入必须与账户变更共用事务。
 func (q *store) EnqueueMail(ctx context.Context, p sqlc.EnqueueMailParams) error {
-	if p.ID == uuid.Nil || !validBytes(p.Kind, 64) || !validBytes(p.Subject, 998) || !validBytes(p.Body, 65536) || p.ExpiresAt.IsZero() {
+	if p.ID == uuid.Nil || !validBytes(p.Kind, maxMailKindBytes) || !validBytes(p.Subject, maxMailSubjectBytes) || !validBytes(p.Body, maxMailBodyBytes) || p.ExpiresAt.IsZero() {
 		return ErrInvalid
 	}
 	if _, err := normalizeEmail(p.Recipient); err != nil {
@@ -193,5 +202,5 @@ func (q *store) enqueueSecurityNotification(ctx context.Context, user sqlc.User,
 	if user.Email == nil || user.EmailVerifiedAt == nil {
 		return nil
 	}
-	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: SecurityNotificationKind, Recipient: *user.Email, Subject: "Account security notification", Body: "<p>" + html.EscapeString(body) + "</p>", ExpiresAt: time.Now().Add(24 * time.Hour)})
+	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: SecurityNotificationKind, Recipient: *user.Email, Subject: "Account security notification", Body: "<p>" + html.EscapeString(body) + "</p>", ExpiresAt: time.Now().Add(securityNotificationTTL)})
 }

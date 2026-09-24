@@ -126,7 +126,7 @@ func TestAdapterDescriptionDoesNotExecuteCallbacks(t *testing.T) {
 func TestRoutePolicyIsExplicitAndControlsContract(t *testing.T) {
 	for _, policy := range []AuthPolicy{Public, Session} {
 		api := humachi.New(chi.NewRouter(), huma.DefaultConfig("test", "1"))
-		route := Endpoint(NewOperation(policy, huma.Operation{OperationID: "policy", Method: "GET", Path: "/policy"}), func(struct{}, context.Context, *struct{}) (*struct{}, error) { return nil, nil })
+		route := Endpoint(NewOperation(policy, huma.Operation{OperationID: "policy", Method: http.MethodGet, Path: "/policy"}), func(struct{}, context.Context, *struct{}) (*struct{}, error) { return nil, nil })
 		route.Describe(api)
 		security := api.OpenAPI().Paths["/policy"].Get.Security
 		if route.Policy() != policy {

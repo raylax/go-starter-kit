@@ -71,19 +71,19 @@ func TestSessionProtectsBusinessResources(t *testing.T) {
 		return data
 	}
 	var owner, other account.SessionCreateResponse
-	if e = json.Unmarshal(call("POST", "/v1/auth/login", "", `{"email":"owner@example.com","password":"integration password phrase"}`, 200), &owner); e != nil {
+	if e = json.Unmarshal(call(http.MethodPost, "/v1/auth/login", "", `{"email":"owner@example.com","password":"integration password phrase"}`, http.StatusOK), &owner); e != nil {
 		t.Fatal(e)
 	}
-	if e = json.Unmarshal(call("POST", "/v1/auth/login", "", `{"email":"other@example.com","password":"integration password phrase"}`, 200), &other); e != nil {
+	if e = json.Unmarshal(call(http.MethodPost, "/v1/auth/login", "", `{"email":"other@example.com","password":"integration password phrase"}`, http.StatusOK), &other); e != nil {
 		t.Fatal(e)
 	}
 	var project struct {
 		ID string `json:"id"`
 	}
-	if e = json.Unmarshal(call("POST", "/v1/projects", owner.Token, `{"name":"private"}`, 201), &project); e != nil {
+	if e = json.Unmarshal(call(http.MethodPost, "/v1/projects", owner.Token, `{"name":"private"}`, http.StatusCreated), &project); e != nil {
 		t.Fatal(e)
 	}
-	call("GET", "/v1/projects/"+project.ID, other.Token, "", 404)
-	call("DELETE", "/v1/me/sessions/"+owner.SessionID.String(), owner.Token, "", 204)
-	call("GET", "/v1/projects/"+project.ID, owner.Token, "", 401)
+	call(http.MethodGet, "/v1/projects/"+project.ID, other.Token, "", http.StatusNotFound)
+	call(http.MethodDelete, "/v1/me/sessions/"+owner.SessionID.String(), owner.Token, "", http.StatusNoContent)
+	call(http.MethodGet, "/v1/projects/"+project.ID, owner.Token, "", http.StatusUnauthorized)
 }

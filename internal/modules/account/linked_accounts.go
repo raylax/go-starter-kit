@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const maxLoginAccounts = 10
+
 func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) (failureErr error) {
 	defer func() {
 		failureErr = proofError(failureErr, ErrFlow)
@@ -55,7 +57,7 @@ func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) 
 			if e != nil {
 				return e
 			}
-			if len(rows) >= 10 {
+			if len(rows) >= maxLoginAccounts {
 				return ErrConflict
 			}
 			a, e = q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: u.ID, ProviderID: f.ProviderID, ProviderNamespace: f.VerifiedNamespace, ProviderAccountID: f.VerifiedSubject})

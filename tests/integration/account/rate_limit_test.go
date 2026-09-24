@@ -18,9 +18,9 @@ import (
 func TestOAuthUsesOnlySourceBudgetAndReportsRemainingWindow(t *testing.T) {
 	f := newFixture(t)
 	for i := 0; i < 60; i++ {
-		f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200)
+		f.call(http.MethodPost, "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, http.StatusOK)
 	}
-	req, err := http.NewRequestWithContext(t.Context(), "POST", f.server.URL+"/v1/auth/oauth/demo", strings.NewReader(`{"purpose":"login"}`))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.server.URL+"/v1/auth/oauth/demo", strings.NewReader(`{"purpose":"login"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,13 +32,13 @@ func TestOAuthUsesOnlySourceBudgetAndReportsRemainingWindow(t *testing.T) {
 	defer res.Body.Close()
 	_, _ = io.Copy(io.Discard, res.Body)
 	seconds, err := strconv.Atoi(res.Header.Get("Retry-After"))
-	if res.StatusCode != 429 || err != nil || seconds < 1 || seconds > 60 {
+	if res.StatusCode != http.StatusTooManyRequests || err != nil || seconds < 1 || seconds > 60 {
 		t.Fatalf("来源限流状态或等待时间错误: status=%d retry=%d", res.StatusCode, seconds)
 	}
 	if _, err = f.pool.Exec(t.Context(), "UPDATE auth_rate_limits SET expires_at=now()-interval '1 second'"); err != nil {
 		t.Fatal(err)
 	}
-	f.call("POST", "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, 200)
+	f.call(http.MethodPost, "/v1/auth/oauth/demo", "", map[string]any{"purpose": "login"}, http.StatusOK)
 	// 已知主体仍保持独立的十五分钟保护，不随 OAuth 来源策略一起放宽。
 	for i := 0; i < 10; i++ {
 		if _, err := f.s.Login(t.Context(), account.Request{ClientIP: "subject-test"}, "person@example.com", "wrong"); !errors.Is(err, account.ErrCredentials) {

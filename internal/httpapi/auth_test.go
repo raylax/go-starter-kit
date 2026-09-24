@@ -42,10 +42,10 @@ func TestBearerTransport(t *testing.T) {
 			handler.ServeHTTP(result, req)
 			valid := header == "bearer token" || header == "Bearer token"
 			if valid {
-				if result.Code != 204 || a.calls != 1 || a.token != "token" || result.Header().Get("Cache-Control") != "no-store" {
+				if result.Code != http.StatusNoContent || a.calls != 1 || a.token != "token" || result.Header().Get("Cache-Control") != "no-store" {
 					t.Fatalf("合法请求解析错误：status=%d calls=%d", result.Code, a.calls)
 				}
-			} else if result.Code != 401 || a.calls != 0 || result.Header().Get("WWW-Authenticate") != "Bearer" {
+			} else if result.Code != http.StatusUnauthorized || a.calls != 0 || result.Header().Get("WWW-Authenticate") != "Bearer" {
 				t.Fatalf("非法请求头没有被 HTTP 层拒绝：status=%d calls=%d", result.Code, a.calls)
 			}
 		})

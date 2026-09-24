@@ -16,18 +16,24 @@ const claimMail = `-- name: ClaimMail :one
 WITH candidate AS (
     SELECT id FROM mail_outbox
     WHERE ((status = 'pending' AND available_at <= now()) OR (status = 'processing' AND leased_until <= now()))
-      AND expires_at > now() AND attempts < 5
+      AND expires_at > now() AND attempts < $3::integer
     ORDER BY available_at, created_at
     FOR UPDATE SKIP LOCKED LIMIT 1
 )
 UPDATE mail_outbox SET status = 'processing', attempts = attempts + 1,
-    lease_id = $1, leased_until = now() + interval '60 seconds'
+    lease_id = $1, leased_until = now() + $2::bigint * interval '1 second'
 WHERE id = (SELECT id FROM candidate)
 RETURNING id, kind, recipient, subject, body, status, attempts, available_at, expires_at, lease_id, leased_until, last_error, created_at, completed_at
 `
 
-func (q *Queries) ClaimMail(ctx context.Context, leaseID *uuid.UUID) (MailOutbox, error) {
-	row := q.db.QueryRow(ctx, claimMail, leaseID)
+type ClaimMailParams struct {
+	LeaseID      *uuid.UUID
+	LeaseSeconds int64
+	MaxAttempts  int32
+}
+
+func (q *Queries) ClaimMail(ctx context.Context, arg ClaimMailParams) (MailOutbox, error) {
+	row := q.db.QueryRow(ctx, claimMail, arg.LeaseID, arg.LeaseSeconds, arg.MaxAttempts)
 	var i MailOutbox
 	err := row.Scan(
 		&i.ID,
@@ -97,26 +103,31 @@ const expireMail = `-- name: ExpireMail :exec
 WITH expired AS (
     SELECT id FROM mail_outbox
     WHERE (status = 'pending' OR (status = 'processing' AND leased_until <= now()))
-      AND (expires_at <= now() OR attempts >= 5)
-    ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 100
+      AND (expires_at <= now() OR attempts >= $1::integer)
+    ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $2::integer
 )
 UPDATE mail_outbox SET status = 'failed', recipient = '', subject = '', body = '',
     lease_id = NULL, leased_until = NULL, completed_at = now(), last_error = 'expired_or_exhausted'
 WHERE id IN (SELECT id FROM expired)
 `
 
-func (q *Queries) ExpireMail(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, expireMail)
+type ExpireMailParams struct {
+	MaxAttempts int32
+	BatchSize   int32
+}
+
+func (q *Queries) ExpireMail(ctx context.Context, arg ExpireMailParams) error {
+	_, err := q.db.Exec(ctx, expireMail, arg.MaxAttempts, arg.BatchSize)
 	return err
 }
 
 const retryMail = `-- name: RetryMail :execrows
-UPDATE mail_outbox SET status = CASE WHEN attempts >= 5 OR expires_at <= now() THEN 'failed' ELSE 'pending' END,
-    recipient = CASE WHEN attempts >= 5 OR expires_at <= now() THEN '' ELSE recipient END,
-    subject = CASE WHEN attempts >= 5 OR expires_at <= now() THEN '' ELSE subject END,
-    body = CASE WHEN attempts >= 5 OR expires_at <= now() THEN '' ELSE body END,
-    completed_at = CASE WHEN attempts >= 5 OR expires_at <= now() THEN now() ELSE NULL END,
-    available_at = now() + $3::bigint * interval '1 second',
+UPDATE mail_outbox SET status = CASE WHEN attempts >= $3::integer OR expires_at <= now() THEN 'failed' ELSE 'pending' END,
+    recipient = CASE WHEN attempts >= $3::integer OR expires_at <= now() THEN '' ELSE recipient END,
+    subject = CASE WHEN attempts >= $3::integer OR expires_at <= now() THEN '' ELSE subject END,
+    body = CASE WHEN attempts >= $3::integer OR expires_at <= now() THEN '' ELSE body END,
+    completed_at = CASE WHEN attempts >= $3::integer OR expires_at <= now() THEN now() ELSE NULL END,
+    available_at = now() + $4::bigint * interval '1 second',
     lease_id = NULL, leased_until = NULL, last_error = 'sender_unavailable'
 WHERE id = $1 AND lease_id = $2 AND status = 'processing' AND leased_until > now()
 `
@@ -124,11 +135,17 @@ WHERE id = $1 AND lease_id = $2 AND status = 'processing' AND leased_until > now
 type RetryMailParams struct {
 	ID           uuid.UUID
 	LeaseID      *uuid.UUID
+	MaxAttempts  int32
 	DelaySeconds int64
 }
 
 func (q *Queries) RetryMail(ctx context.Context, arg RetryMailParams) (int64, error) {
-	result, err := q.db.Exec(ctx, retryMail, arg.ID, arg.LeaseID, arg.DelaySeconds)
+	result, err := q.db.Exec(ctx, retryMail,
+		arg.ID,
+		arg.LeaseID,
+		arg.MaxAttempts,
+		arg.DelaySeconds,
+	)
 	if err != nil {
 		return 0, err
 	}

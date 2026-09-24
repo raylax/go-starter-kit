@@ -18,13 +18,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const (
+	maxOAuthCodeBytes  = 8 << 10 // 8 KiB
+	maxOAuthStateBytes = 128
+)
+
 type protocolState struct{ Verifier string }
 
 func (s *Service) StartLogin(ctx context.Context, r Request, provider string, purpose FlowPurpose) (FlowResult, error) {
 	if !purpose.PublicStart() {
 		return FlowResult{}, ErrInvalid
 	}
-	if e := s.limit(ctx, "oauth.ip", r.ClientIP, 60, time.Minute); e != nil {
+	if e := s.limit(ctx, "oauth.ip", r.ClientIP, ipRequestLimit, ipRateWindow); e != nil {
 		return FlowResult{}, e
 	}
 	return s.startFlow(ctx, r, purpose, provider, "", "", nil, nil)
@@ -104,7 +109,7 @@ func (s *Service) Callback(ctx context.Context, r Request, token, code, state st
 		failureErr = proofError(failureErr, ErrFlow)
 		s.recordFailure(ctx, r, "auth.oauth_callback", failureErr)
 	}()
-	if e := s.limit(ctx, "callback.ip", r.ClientIP, 60, time.Minute); e != nil {
+	if e := s.limit(ctx, "callback.ip", r.ClientIP, ipRequestLimit, ipRateWindow); e != nil {
 		return AuthenticationResult{}, e
 	}
 	hash, e := identity.TokenDigest(token, FlowPrefix)
@@ -118,7 +123,7 @@ func (s *Service) Callback(ctx context.Context, r Request, token, code, state st
 	if e != nil {
 		return AuthenticationResult{}, e
 	}
-	if FlowStatus(f.Status) != FlowPending || len(code) == 0 || len(code) > 8192 || len(state) > 128 || subtle.ConstantTimeCompare(identity.Digest(state), f.StateHash) != 1 {
+	if FlowStatus(f.Status) != FlowPending || len(code) == 0 || len(code) > maxOAuthCodeBytes || len(state) > maxOAuthStateBytes || subtle.ConstantTimeCompare(identity.Digest(state), f.StateHash) != 1 {
 		return AuthenticationResult{}, ErrCredentials
 	}
 	if s.deps.Federation.Version(f.ProviderID) != f.ConfigVersion {
@@ -143,15 +148,15 @@ func (s *Service) Callback(ctx context.Context, r Request, token, code, state st
 	if e != nil {
 		return AuthenticationResult{}, e
 	}
-	if verified.Subject == "" || len(verified.Subject) > 1024 || verified.Namespace == "" || len(verified.Namespace) > 2048 {
+	if verified.Subject == "" || len(verified.Subject) > maxProviderSubjectBytes || verified.Namespace == "" || len(verified.Namespace) > maxProviderNamespaceBytes {
 		return AuthenticationResult{}, ErrCredentials
 	}
 	if !utf8.ValidString(verified.Name) {
 		verified.Name = ""
 	}
 	name := []rune(strings.TrimSpace(verified.Name))
-	if len(name) > 100 {
-		name = name[:100]
+	if len(name) > maxDisplayNameRunes {
+		name = name[:maxDisplayNameRunes]
 	}
 	verified.Name = string(name)
 	var result AuthenticationResult

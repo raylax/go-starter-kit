@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -30,10 +31,10 @@ func TestApplicationAndMigrations(t *testing.T) {
 	alice := httptest.NewServer(handler)
 	t.Cleanup(alice.Close)
 	request := testutil.Request(t)
-	request(alice, "GET", "/health/ready", "", false, 200)
-	request(alice, "POST", "/v1/projects", `{"name":"保留的项目"}`, true, 201)
-	request(alice, "POST", "/v1/tasks", `{"title":"测试任务"}`, true, 201)
-	spec := request(alice, "GET", "/openapi.json", "", false, 200)
+	request(alice, http.MethodGet, "/health/ready", "", false, http.StatusOK)
+	request(alice, http.MethodPost, "/v1/projects", `{"name":"保留的项目"}`, true, http.StatusCreated)
+	request(alice, http.MethodPost, "/v1/tasks", `{"title":"测试任务"}`, true, http.StatusCreated)
+	spec := request(alice, http.MethodGet, "/openapi.json", "", false, http.StatusOK)
 	var contract struct {
 		Paths map[string]map[string]json.RawMessage `json:"paths"`
 	}
@@ -98,9 +99,9 @@ func TestApplicationAndMigrations(t *testing.T) {
 	}
 	assertTables(true)
 	createRecords("重建后的记录")
-	request(alice, "GET", "/v1/projects", "", true, 200)
-	request(alice, "GET", "/v1/tasks", "", true, 200)
+	request(alice, http.MethodGet, "/v1/projects", "", true, http.StatusOK)
+	request(alice, http.MethodGet, "/v1/tasks", "", true, http.StatusOK)
 	pool.Close()
-	request(alice, "GET", "/health/ready", "", false, 503)
-	request(alice, "GET", "/health/live", "", false, 200)
+	request(alice, http.MethodGet, "/health/ready", "", false, http.StatusServiceUnavailable)
+	request(alice, http.MethodGet, "/health/live", "", false, http.StatusOK)
 }

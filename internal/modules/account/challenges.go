@@ -15,6 +15,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const (
+	registrationChallengeTTL  = 24 * time.Hour
+	passwordResetChallengeTTL = 15 * time.Minute
+	emailChangeChallengeTTL   = 5 * time.Minute
+)
+
 func (s *Service) createChallenge(ctx context.Context, q *store, u sqlc.User, purpose VerificationPurpose, email string, ttl time.Duration, session, reauth *uuid.UUID) (sqlc.AuthVerification, error) {
 	token, hash := identity.NewToken(ChallengePrefix)
 	v, e := q.CreateVerification(ctx, sqlc.CreateVerificationParams{UserID: u.ID, Purpose: string(purpose), TokenHash: hash, Email: email, AuthVersion: u.AuthVersion, SessionID: session, ReauthenticationID: reauth, TtlSeconds: int64(ttl.Seconds())})
@@ -36,7 +42,7 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 		failureErr = proofError(failureErr, ErrVerification)
 		s.recordFailure(ctx, r, "auth.verify", failureErr)
 	}()
-	if e := s.limit(ctx, "verify.ip", r.ClientIP, 60, time.Minute); e != nil {
+	if e := s.limit(ctx, "verify.ip", r.ClientIP, ipRequestLimit, ipRateWindow); e != nil {
 		return e
 	}
 	hash, e := identity.TokenDigest(token, ChallengePrefix)

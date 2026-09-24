@@ -79,7 +79,7 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 			if e != nil {
 				return e
 			}
-			if len(rows) >= 10 {
+			if len(rows) >= maxLoginAccounts {
 				return ErrConflict
 			}
 			if _, e = q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: u.ID, ProviderID: CredentialProvider, ProviderAccountID: u.ID.String(), ProviderNamespace: LocalNamespace, PasswordHash: &hash}); e != nil {

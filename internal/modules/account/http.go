@@ -12,10 +12,24 @@ import (
 	"github.com/google/uuid"
 )
 
+const maxRequestBodyBytes = 16 << 10 // 16 KiB
+
 // operation 为账户路由补充统一的错误契约、请求上限和缓存策略。
 func operation(policy httpapi.AuthPolicy, spec huma.Operation) httpapi.Operation {
-	spec.Errors = []int{400, 401, 403, 404, 409, 413, 422, 429, 500, 503, 504}
-	spec.MaxBodyBytes = 16 << 10
+	spec.Errors = []int{
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusRequestEntityTooLarge,
+		http.StatusUnprocessableEntity,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+	}
+	spec.MaxBodyBytes = maxRequestBodyBytes
 	op := httpapi.NewOperation(policy, spec)
 	op.Middlewares = append(op.Middlewares, func(ctx huma.Context, next func(huma.Context)) {
 		ctx.SetHeader("Cache-Control", "no-store")
