@@ -19,11 +19,14 @@ import (
 type adapterInput struct {
 	Value string `query:"value"`
 }
+
+type adapterBody struct {
+	Value string `json:"value"`
+}
+
 type adapterOutput struct {
 	Location string `header:"Location"`
-	Body     struct {
-		Value string `json:"value"`
-	}
+	Body     adapterBody
 }
 
 type adapterContextKey struct{}
@@ -67,9 +70,7 @@ func TestMapEndpointExecutionAndPresentation(t *testing.T) {
 				t.Fatalf("适配器调用次数或状态错误：status=%d calls=%d presentations=%d", recorder.Code, calls, presentations)
 			}
 			if tc.err == nil {
-				var body struct {
-					Value string `json:"value"`
-				}
+				var body adapterBody
 				if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil || body.Value != "hello" || recorder.Header().Get("Location") != "/items/1" {
 					t.Fatal("成功响应正文或响应头丢失")
 				}

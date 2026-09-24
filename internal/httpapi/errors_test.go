@@ -22,13 +22,17 @@ import (
 	"github.com/example/go-starter-kit/internal/apperror"
 )
 
+type sensitiveRequest struct {
+	Password string `json:"password" maxLength:"4"`
+}
+
+type sensitiveInput struct {
+	Body sensitiveRequest
+}
+
 func TestValidationDoesNotEchoCredentials(t *testing.T) {
 	handler, api := New(Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	huma.Register(api, huma.Operation{OperationID: "sensitive", Method: http.MethodPost, Path: "/sensitive"}, func(context.Context, *struct {
-		Body struct {
-			Password string `json:"password" maxLength:"4"`
-		}
-	}) (*struct{}, error) {
+	huma.Register(api, huma.Operation{OperationID: "sensitive", Method: http.MethodPost, Path: "/sensitive"}, func(context.Context, *sensitiveInput) (*struct{}, error) {
 		return &struct{}{}, nil
 	})
 	for _, body := range []string{

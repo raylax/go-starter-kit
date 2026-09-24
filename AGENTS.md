@@ -46,4 +46,4 @@
 
 - 不提供 Development 认证模式、固定演示令牌或环境相关的安全豁免。OAuth 端点使用 HTTPS。APP_ENV 仅为环境标识，不改变认证规则；固定身份夹具仅允许位于测试辅助代码。
 
-- `internal/authorization` 只定义 Subject 与 Authorizer 契约，不依赖业务模块。账户模块提供独立 AdminChecker，应用层适配并通过 Fx 注入，避免账户 Service 与授权器循环依赖。需要管理功能的其他模块只依赖授权接口，禁止直接依赖 account；权限查询与业务事务不保证串行一致性。
+- `internal/authorization` 只定义 Subject 与 Authorizer 契约，不依赖业务模块。账户模块的独立 AdminChecker 直接实现 Authorizer，应用层装配时直接注入，避免账户 Service 与授权器循环依赖。需要管理功能的其他模块只依赖授权接口，禁止直接依赖 account；权限查询与业务事务不保证串行一致性。

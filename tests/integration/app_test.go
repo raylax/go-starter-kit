@@ -19,6 +19,10 @@ import (
 	"github.com/example/go-starter-kit/tests/integration/testutil"
 )
 
+type openAPIContract struct {
+	Paths map[string]map[string]json.RawMessage `json:"paths"`
+}
+
 func TestApplicationAndMigrations(t *testing.T) {
 	ctx := t.Context()
 	pool, databaseURL := testutil.Database(t)
@@ -35,9 +39,7 @@ func TestApplicationAndMigrations(t *testing.T) {
 	request(alice, http.MethodPost, "/v1/projects", `{"name":"保留的项目"}`, true, http.StatusCreated)
 	request(alice, http.MethodPost, "/v1/tasks", `{"title":"测试任务"}`, true, http.StatusCreated)
 	spec := request(alice, http.MethodGet, "/openapi.json", "", false, http.StatusOK)
-	var contract struct {
-		Paths map[string]map[string]json.RawMessage `json:"paths"`
-	}
+	var contract openAPIContract
 	if err := json.Unmarshal(spec, &contract); err != nil {
 		t.Fatal(err)
 	}

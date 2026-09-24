@@ -9,6 +9,19 @@ import (
 	"time"
 )
 
+// 审计元数据独立于 HTTP DTO，固定字段使用领域类型。
+type userStatusAuditMetadata struct {
+	Status UserStatus `json:"status"`
+}
+
+type accountProviderAuditMetadata struct {
+	Provider string `json:"provider"`
+}
+
+type loginAuditMetadata struct {
+	Method AuthMethod `json:"method"`
+}
+
 func audit(ctx context.Context, q *store, r Request, action string, outcome AuditOutcome, kind, id, scope, reason string, metadata any) error {
 	data, e := json.Marshal(metadata)
 	if e != nil {

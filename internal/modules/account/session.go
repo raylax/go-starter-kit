@@ -47,9 +47,8 @@ func (s *Service) newSession(ctx context.Context, q *store, r Request, u sqlc.Us
 	}
 	r.UserID = u.ID.String()
 	r.SessionID = row.ID.String()
-	if e = audit(ctx, q, r, "auth.login", AuditSuccess, "session", row.ID.String(), u.ID.String(), "", struct {
-		Method AuthMethod `json:"method"`
-	}{method}); e != nil {
+	metadata := loginAuditMetadata{Method: method}
+	if e = audit(ctx, q, r, "auth.login", AuditSuccess, "session", row.ID.String(), u.ID.String(), "", metadata); e != nil {
 		return SessionCredentials{}, e
 	}
 	return SessionCredentials{Token: token, ID: row.ID, IdleExpiresAt: row.IdleExpiresAt, AbsoluteExpiresAt: row.AbsoluteExpiresAt}, nil

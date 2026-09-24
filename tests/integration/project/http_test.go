@@ -67,10 +67,7 @@ func TestProjectCRUD(t *testing.T) {
 	}
 	firstPage := request(alice, http.MethodGet, "/v1/projects?limit=1", "", true, http.StatusOK)
 	secondPage := request(alice, http.MethodGet, "/v1/projects?limit=1&offset=1", "", true, http.StatusOK)
-	var page1, page2 struct {
-		Items   []project.Project `json:"items"`
-		HasMore bool              `json:"has_more"`
-	}
+	var page1, page2 project.ProjectListResponse
 	if err := json.Unmarshal(firstPage, &page1); err != nil {
 		t.Fatal(err)
 	}

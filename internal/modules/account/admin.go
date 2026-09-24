@@ -15,7 +15,7 @@ func (s *Service) Users(ctx context.Context, r Request, p pagination.Params) (_ 
 		return pagination.Result[UserRecord]{}, ErrInvalid
 	}
 	if err := s.deps.Authorizer.RequireAdmin(ctx, r.Subject); err != nil {
-		return pagination.Result[UserRecord]{}, db.MapError(err, storageErrors)
+		return pagination.Result[UserRecord]{}, err
 	}
 	rows, err := s.queries.ListUsers(ctx, sqlc.ListUsersParams{Limit: p.FetchLimit(), Offset: p.Offset})
 	if err != nil {
@@ -49,9 +49,8 @@ func (s *Service) SetStatus(ctx context.Context, r Request, id uuid.UUID, status
 		if e = q.RevokeUserSessions(ctx, id); e != nil {
 			return e
 		}
-		if e = audit(ctx, q, r, "user.status_change", AuditSuccess, "user", id.String(), id.String(), "", struct {
-			Status string `json:"status"`
-		}{string(status)}); e != nil {
+		metadata := userStatusAuditMetadata{Status: status}
+		if e = audit(ctx, q, r, "user.status_change", AuditSuccess, "user", id.String(), id.String(), "", metadata); e != nil {
 			return e
 		}
 		result = userRecord(u)

@@ -11,10 +11,3 @@ type Subject struct{ UserID, SessionID string }
 type Authorizer interface {
 	RequireAdmin(context.Context, Subject) error
 }
-
-// AdminCheckFunc 适配应用装配函数或测试替身。
-type AdminCheckFunc func(context.Context, Subject) error
-
-func (f AdminCheckFunc) RequireAdmin(ctx context.Context, subject Subject) error {
-	return f(ctx, subject)
-}

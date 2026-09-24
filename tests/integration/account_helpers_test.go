@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	app "github.com/example/go-starter-kit/internal/app/api"
 	"github.com/example/go-starter-kit/internal/modules/account"
+	"github.com/example/go-starter-kit/internal/modules/project"
 	"github.com/example/go-starter-kit/internal/platform/password"
 	"github.com/example/go-starter-kit/tests/integration/testutil"
 	"github.com/google/uuid"
@@ -77,13 +78,11 @@ func TestSessionProtectsBusinessResources(t *testing.T) {
 	if e = json.Unmarshal(call(http.MethodPost, "/v1/auth/login", "", `{"email":"other@example.com","password":"integration password phrase"}`, http.StatusOK), &other); e != nil {
 		t.Fatal(e)
 	}
-	var project struct {
-		ID string `json:"id"`
-	}
-	if e = json.Unmarshal(call(http.MethodPost, "/v1/projects", owner.Token, `{"name":"private"}`, http.StatusCreated), &project); e != nil {
+	var createdProject project.Project
+	if e = json.Unmarshal(call(http.MethodPost, "/v1/projects", owner.Token, `{"name":"private"}`, http.StatusCreated), &createdProject); e != nil {
 		t.Fatal(e)
 	}
-	call(http.MethodGet, "/v1/projects/"+project.ID, other.Token, "", http.StatusNotFound)
+	call(http.MethodGet, "/v1/projects/"+createdProject.ID.String(), other.Token, "", http.StatusNotFound)
 	call(http.MethodDelete, "/v1/me/sessions/"+owner.SessionID.String(), owner.Token, "", http.StatusNoContent)
-	call(http.MethodGet, "/v1/projects/"+project.ID, owner.Token, "", http.StatusUnauthorized)
+	call(http.MethodGet, "/v1/projects/"+createdProject.ID.String(), owner.Token, "", http.StatusUnauthorized)
 }

@@ -17,12 +17,6 @@ import (
 
 const passwordHashConcurrency = 4
 
-// newAuthorizer 将账户权限查询适配为各业务模块共用的授权接口。
-func newAuthorizer(database account.Database) authorization.Authorizer {
-	checker := account.NewAdminChecker(database)
-	return authorization.AdminCheckFunc(checker.CheckAdmin)
-}
-
 func newAccounts(cfg Config, database account.Database, authorizer authorization.Authorizer, logger *slog.Logger) (*account.Service, error) {
 	hasher, err := password.New(passwordHashConcurrency)
 	if err != nil {

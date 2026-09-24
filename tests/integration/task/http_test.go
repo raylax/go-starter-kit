@@ -77,15 +77,9 @@ func TestTaskCRUD(t *testing.T) {
 	request(alice, http.MethodPost, "/v1/tasks", `{"title":"文档完成","status":"done"}`, true, http.StatusCreated)
 	request(alice, http.MethodPost, "/v1/tasks", `{"title":"另一项","status":"in_progress"}`, true, http.StatusCreated)
 	request(bob, http.MethodPost, "/v1/tasks", `{"title":"其他用户","status":"done"}`, true, http.StatusCreated)
-	type page struct {
-		Items   []task.Task `json:"items"`
-		HasMore bool        `json:"has_more"`
-		Limit   int32       `json:"limit"`
-		Offset  int32       `json:"offset"`
-	}
-	list := func(server *httptest.Server, query string) page {
+	list := func(server *httptest.Server, query string) task.TaskListResponse {
 		t.Helper()
-		var result page
+		var result task.TaskListResponse
 		data := request(server, http.MethodGet, "/v1/tasks"+query, "", true, http.StatusOK)
 		if err := json.Unmarshal(data, &result); err != nil {
 			t.Fatal(err)

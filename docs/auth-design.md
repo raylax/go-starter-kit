@@ -212,8 +212,8 @@ API 不检查 Origin，也不处理 CORS；跨域预检与响应头由网关配�
 
 ### 公共管理员授权
 
-`internal/authorization.Authorizer` 定义 `RequireAdmin(ctx, Subject)`；Subject 只包含服务端认证得到的用户 ID 和原会话 ID。`account.AdminChecker` 使用一个普通查询同时检查用户状态、会话归属、撤销及有效期、认证版本和角色。`app/api/accounts.go` 将它适配为公共接口并由 Fx 注入。
+`internal/authorization.Authorizer` 定义 `RequireAdmin(ctx, Subject)`；Subject 只包含服务端认证得到的用户 ID 和原会话 ID。`account.AdminChecker` 直接实现该接口，使用一个普通查询同时检查用户状态、会话归属、撤销及有效期、认证版本和角色。`app/api/wire.go` 在装配业务依赖时直接注入该实现，不增加函数适配层。
 
 账户 Service 与权限查询独立，依赖图为数据库 → AdminChecker/Authorizer → 业务 Service。后续项目或任务管理入口注入同一接口，保持模块之间无直接依赖。授权失败立即返回；成功后再开启业务事务，业务变更与审计同事务。不使用显式行锁，权限在检查之后发生变化时不保证与本次业务写入串行化。
 
-账户 `Request` 嵌入公共 `authorization.Subject`，HTTP 入口统一构造主体；管理操作直接调用 `RequireAdmin(ctx, r.Subject)`，避免各入口重复映射用户和会话字段。
+账户 `Request` 嵌入公共 `authorization.Subject`，HTTP 入口统一构造主体；管理操作直接调用 `RequireAdmin(ctx, r.Subject)`，避免各入口重复映射用户和会话字段。授权器负责转换查询错误，业务入口直接返回授权错误，不重复包装。

@@ -15,12 +15,14 @@ import (
 // AdminChecker 只读取授权数据，独立于 Service，避免授权器和账户服务循环依赖。
 type AdminChecker struct{ queries *store }
 
+var _ authorization.Authorizer = (*AdminChecker)(nil)
+
 func NewAdminChecker(database sqlc.DBTX) *AdminChecker {
 	return &AdminChecker{queries: newStore(database)}
 }
 
-// CheckAdmin 在同一查询快照内检查有效会话与用户角色，不获取显式行锁。
-func (c *AdminChecker) CheckAdmin(ctx context.Context, subject authorization.Subject) error {
+// RequireAdmin 在同一查询快照内检查有效会话与用户角色，不获取显式行锁。
+func (c *AdminChecker) RequireAdmin(ctx context.Context, subject authorization.Subject) error {
 	uid, err := uuid.Parse(subject.UserID)
 	if err != nil {
 		return apperror.ErrUnauthenticated

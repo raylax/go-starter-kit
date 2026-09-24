@@ -11,9 +11,9 @@
 | `internal/app/api/config.go` | env 标签、配置规范化和业务校验 |
 | `internal/app/appfx/` | 公共 Fx 基础设施、启动回滚和停止预算 |
 | `internal/app/api/module.go` | API 的 Fx 依赖图 |
-| `internal/app/api/accounts.go` | 账户依赖装配、密码与 GitHub OAuth 适配、公共管理员授权适配 |
+| `internal/app/api/accounts.go` | 账户依赖装配、密码与 GitHub OAuth 适配 |
 | `internal/app/api/run.go`、`server.go` | 运行 Fx 应用、HTTP 启停及请求排空 |
-| `internal/app/api/wire.go` | 共用的 NewServices 构造入口、会话认证适配、依赖检查与 HTTP handler 构造 |
+| `internal/app/api/wire.go` | 共用的 NewServices 构造入口、管理员授权器注入、会话认证适配、依赖检查与 HTTP handler 构造 |
 | `internal/app/api/routes.go` | 统一路由清单及离线 OpenAPI 导出 |
 
 `app.Config` 留在装配层；HTTP 接收 `httpapi.Config`，账户服务接收独立的 `account.Options` 与功能依赖。业务服务不读取环境变量，也不访问全局连接池。API 与 Worker 的数据库 URL、连接数、关闭期限和遥测服务名由 `appfx.Config.Validate` 共用校验；环境变量与各入口默认值仍分别维护。日志器显式注入，不通过 SetDefault 修改进程全局日志。

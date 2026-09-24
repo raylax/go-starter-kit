@@ -27,6 +27,11 @@ type Config struct {
 	OTelServiceName    string        `env:"OTEL_SERVICE_NAME"`
 }
 
+type durationSetting struct {
+	key   string
+	value time.Duration
+}
+
 func Load() (Config, error) { return Parse(os.LookupEnv) }
 
 // Parse 转换环境变量，之后执行业务校验。
@@ -50,12 +55,10 @@ func (c Config) Validate() error {
 		return err
 	}
 
-	for _, entry := range []struct {
-		key   string
-		value time.Duration
-	}{
-		{"REQUEST_TIMEOUT", c.RequestTimeout},
-		{"AUTH_SESSION_IDLE_TTL", c.AuthSessionIdleTTL}, {"AUTH_SESSION_MAX_TTL", c.AuthSessionMaxTTL},
+	for _, entry := range []durationSetting{
+		{key: "REQUEST_TIMEOUT", value: c.RequestTimeout},
+		{key: "AUTH_SESSION_IDLE_TTL", value: c.AuthSessionIdleTTL},
+		{key: "AUTH_SESSION_MAX_TTL", value: c.AuthSessionMaxTTL},
 	} {
 		if entry.value <= 0 {
 			return fmt.Errorf("%s 必须为正时长", entry.key)

@@ -76,9 +76,8 @@ func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) 
 		if err := q.enqueueSecurityNotification(ctx, u, "新的第三方登录账号已绑定。"); err != nil {
 			return err
 		}
-		return audit(ctx, q, r, "account.link", AuditSuccess, "account", a.ID.String(), u.ID.String(), "", struct {
-			Provider string `json:"provider"`
-		}{f.ProviderID})
+		metadata := accountProviderAuditMetadata{Provider: f.ProviderID}
+		return audit(ctx, q, r, "account.link", AuditSuccess, "account", a.ID.String(), u.ID.String(), "", metadata)
 	})
 }
 func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID uuid.UUID) (failureErr error) {
@@ -125,9 +124,8 @@ func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID uuid.UUID)
 		if err := q.enqueueSecurityNotification(ctx, u, "一个登录账号已解除绑定，请使用保留的方式重新登录。"); err != nil {
 			return err
 		}
-		return audit(ctx, q, r, "account.unlink", AuditSuccess, "account", id.String(), u.ID.String(), "", struct {
-			Provider string `json:"provider"`
-		}{a.ProviderID})
+		metadata := accountProviderAuditMetadata{Provider: a.ProviderID}
+		return audit(ctx, q, r, "account.unlink", AuditSuccess, "account", id.String(), u.ID.String(), "", metadata)
 	})
 }
 

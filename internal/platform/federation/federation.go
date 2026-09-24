@@ -48,6 +48,12 @@ type Verified struct {
 	Namespace, Subject, Name string
 	AuthenticatedAt          time.Time
 }
+
+type githubUserResponse struct {
+	ID    int64  `json:"id"`
+	Login string `json:"login"`
+}
+
 type provider struct {
 	config  Config
 	version string
@@ -135,10 +141,7 @@ func (r *Registry) Verify(ctx context.Context, id, version, code, verifier strin
 	if res.StatusCode != http.StatusOK {
 		return Verified{}, ErrUnavailable
 	}
-	var user struct {
-		ID    int64  `json:"id"`
-		Login string `json:"login"`
-	}
+	var user githubUserResponse
 	if err := json.NewDecoder(io.LimitReader(res.Body, maxUserResponseBytes)).Decode(&user); err != nil {
 		return Verified{}, dependencyError(ctx, err)
 	}

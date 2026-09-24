@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/example/go-starter-kit/internal/modules/account"
 	"html"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/platform/password"
@@ -55,7 +55,7 @@ func newFixture(t *testing.T, configure ...func(*account.Options)) *accountFixtu
 	for _, apply := range configure {
 		apply(&f.options)
 	}
-	f.deps = account.Dependencies{Authorizer: authorization.AdminCheckFunc(account.NewAdminChecker(pool).CheckAdmin), Passwords: h, Federation: testFederation{t}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	f.deps = account.Dependencies{Authorizer: account.NewAdminChecker(pool), Passwords: h, Federation: testFederation{t}, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	f.s = f.newService(pool, f.deps)
 	handler, api := httpapi.New(httpapi.Config{RequestTimeout: 10 * time.Second}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, route := range append(account.Routes(), account.AdminRoutes()...) {
@@ -116,9 +116,7 @@ func (f *accountFixture) call(method, path, token string, body any, want int) []
 	return out
 }
 func safeError(raw []byte) string {
-	var err struct {
-		Detail string `json:"detail"`
-	}
+	var err huma.ErrorModel
 	_ = json.Unmarshal(raw, &err)
 	return err.Detail
 }
@@ -138,11 +136,11 @@ func (f *accountFixture) challenge(email, purpose string) string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var m struct{ Body string }
-		if err := rows.Scan(&m.Body); err != nil {
+		var body string
+		if err := rows.Scan(&body); err != nil {
 			f.t.Fatal(err)
 		}
-		_, after, found := strings.Cut(m.Body, `href="`)
+		_, after, found := strings.Cut(body, `href="`)
 		if !found {
 			continue
 		}

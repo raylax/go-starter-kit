@@ -36,7 +36,7 @@ func NewServices(cfg Config, database Database, logger *slog.Logger) (Dependenci
 	if database == nil || logger == nil {
 		return Dependencies{}, fmt.Errorf("应用依赖不完整")
 	}
-	accounts, err := newAccounts(cfg, database, newAuthorizer(database), logger)
+	accounts, err := newAccounts(cfg, database, account.NewAdminChecker(database), logger)
 	if err != nil {
 		return Dependencies{}, err
 	}
