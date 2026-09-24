@@ -85,11 +85,14 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 		if u.AuthVersion != v.AuthVersion || UserStatus(u.Status) == UserDisabled {
 			return ErrCredentials
 		}
+		var notification string
 		switch input.Purpose {
 		case VerifyRegister:
 			u, e = s.completeRegistration(ctx, q, u, v, passwordHash)
+			notification = "您的账户已完成注册，邮箱验证及密码设置成功。您现在可以登录。"
 		case VerifyResetPassword:
 			e = s.completePasswordReset(ctx, q, u, v, passwordHash)
+			notification = "您的账户密码已重置。如非本人操作，请立即联系管理员。"
 		case VerifyChangeEmail:
 			e = s.completeEmailChange(ctx, q, u, v)
 		default:
@@ -101,8 +104,8 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 		if e = q.consumeVerification(ctx, v.ID, u.ID); e != nil {
 			return e
 		}
-		if input.Purpose != VerifyChangeEmail {
-			if err := q.enqueueSecurityNotification(ctx, u, "账户验证或密码恢复已完成，请重新登录。"); err != nil {
+		if notification != "" {
+			if err := q.enqueueSecurityNotification(ctx, u, notification); err != nil {
 				return err
 			}
 		}

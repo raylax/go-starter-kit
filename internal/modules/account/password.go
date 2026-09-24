@@ -51,6 +51,7 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 			return ErrReauthentication
 		}
 		current, ce := q.GetPasswordAccount(ctx, u.ID)
+		notification := "您的账户密码已修改。如非本人操作，请立即联系管理员。"
 		if ae == nil {
 			if ce != nil {
 				return proofError(credentialLookupError(ce), ErrReauthentication)
@@ -62,6 +63,7 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 				return e
 			}
 		} else {
+			notification = "您的账户已设置登录密码。如非本人操作，请立即联系管理员。"
 			if !errors.Is(ce, pgx.ErrNoRows) {
 				if ce != nil {
 					return ce
@@ -92,7 +94,7 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 		if e = s.invalidate(ctx, q, u.ID); e != nil {
 			return e
 		}
-		if err := q.enqueueSecurityNotification(ctx, u, "账户密码已变更，请重新登录。"); err != nil {
+		if err := q.enqueueSecurityNotification(ctx, u, notification); err != nil {
 			return err
 		}
 		return audit(ctx, q, r, "account.password_change", AuditSuccess, "user", u.ID.String(), u.ID.String(), "", nil)
