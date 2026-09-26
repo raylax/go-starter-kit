@@ -2,6 +2,7 @@ package account
 
 import (
 	"context"
+	"time"
 
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/example/go-starter-kit/internal/validation"
@@ -32,11 +33,20 @@ func (q *store) consumeFlow(ctx context.Context, id uuid.UUID, expected FlowStat
 		return ErrCredentials
 	}
 }
-func (q *store) verifyFlow(ctx context.Context, id uuid.UUID, status FlowStatus, v VerifiedIdentity) error {
-	if !status.Verifiable() || !validBytes(v.Namespace, maxProviderNamespaceBytes) || v.Namespace == LocalNamespace || !validBytes(v.Subject, maxProviderSubjectBytes) || !validation.TextWithin(v.Name, maxDisplayNameRunes) {
+func (q *store) verifyFlow(ctx context.Context, id uuid.UUID, status FlowStatus, verified VerifiedIdentity) error {
+	if !status.Verifiable() || !validBytes(verified.Namespace, maxProviderNamespaceBytes) || verified.Namespace == LocalNamespace || !validBytes(verified.Subject, maxProviderSubjectBytes) || !validation.TextWithin(verified.Name, maxDisplayNameRunes) {
 		return ErrInvalid
 	}
-	return transitionResult(q.rawQueries.VerifyFlow(ctx, sqlc.VerifyFlowParams{ID: id, Status: string(status), VerifiedNamespace: v.Namespace, VerifiedSubject: v.Subject, VerifiedName: v.Name, AuthenticatedAt: &v.AuthenticatedAt}))
+	// 记录本应用完成证明校验的时间；GitHub OAuth 不提供用户重新输入凭据的时间。
+	verifiedAt := time.Now()
+	return transitionResult(q.rawQueries.VerifyFlow(ctx, sqlc.VerifyFlowParams{
+		ID:                id,
+		Status:            string(status),
+		VerifiedNamespace: verified.Namespace,
+		VerifiedSubject:   verified.Subject,
+		VerifiedName:      verified.Name,
+		AuthenticatedAt:   &verifiedAt,
+	}))
 }
 func (q *store) consumeVerification(ctx context.Context, id, user uuid.UUID) error {
 	return transitionResult(q.rawQueries.ConsumeVerification(ctx, sqlc.ConsumeVerificationParams{ID: id, UserID: user}))

@@ -21,10 +21,12 @@ func Middleware(api huma.API, authenticator identity.Authenticator) func(huma.Co
 			principal, err = authenticator.Authenticate(ctx.Context(), raw)
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Context().Err(), context.DeadlineExceeded) {
+			logFailure(ctx.Context(), "authenticate_session", "authentication failed", context.DeadlineExceeded)
 			_ = huma.WriteErr(api, ctx, http.StatusGatewayTimeout, "authentication deadline exceeded")
 			return
 		}
 		if err != nil && !errors.Is(err, identity.ErrUnauthorized) {
+			logFailure(ctx.Context(), "authenticate_session", "authentication failed", err)
 			_ = huma.WriteErr(api, ctx, http.StatusServiceUnavailable, "authentication service unavailable")
 			return
 		}

@@ -3,9 +3,6 @@ package account
 import (
 	"context"
 	"errors"
-	"fmt"
-	"html"
-	"net/url"
 	"time"
 
 	"github.com/example/go-starter-kit/internal/db"
@@ -19,49 +16,47 @@ const (
 	registrationChallengeTTL  = 24 * time.Hour
 	passwordResetChallengeTTL = 15 * time.Minute
 	emailChangeChallengeTTL   = 5 * time.Minute
-
-	verificationMailSubject           = "Verify your account"
-	verificationMailBodyTemplate      = `<p>请在有效期内完成账户验证。请勿转发此邮件。</p><p><a href="%s">验证账户</a></p>`
-	registrationCompletedNotification = "您的账户已完成注册，邮箱验证及密码设置成功。您现在可以登录。"
-	passwordResetNotification         = "您的账户密码已重置。如非本人操作，请立即联系管理员。"
 )
 
-func (s *Service) createChallenge(ctx context.Context, q *store, u sqlc.User, purpose VerificationPurpose, email string, ttl time.Duration, session, reauth *uuid.UUID) (sqlc.AuthVerification, error) {
+func (s *Service) createChallenge(ctx context.Context, q *store, user sqlc.User, purpose VerificationPurpose, email string, ttl time.Duration, session, reauth *uuid.UUID) (sqlc.AuthVerification, error) {
 	token, hash := identity.NewToken(ChallengePrefix)
-	v, e := q.CreateVerification(ctx, sqlc.CreateVerificationParams{UserID: u.ID, Purpose: string(purpose), TokenHash: hash, Email: email, AuthVersion: u.AuthVersion, SessionID: session, ReauthenticationID: reauth, TtlSeconds: int64(ttl.Seconds())})
-	if e != nil {
-		return v, e
+	verification, err := q.CreateVerification(ctx, sqlc.CreateVerificationParams{
+		UserID:             user.ID,
+		Purpose:            string(purpose),
+		TokenHash:          hash,
+		Email:              email,
+		AuthVersion:        user.AuthVersion,
+		SessionID:          session,
+		ReauthenticationID: reauth,
+		TtlSeconds:         int64(ttl.Seconds()),
+	})
+	if err != nil {
+		return verification, err
 	}
-	link, e := url.Parse(s.options.FrontendURL)
-	if e != nil {
-		return v, ErrUnavailable
-	}
-	link.Path = "/auth/verify"
-	link.RawQuery = ""
-	link.Fragment = url.Values{"token": {token}, "purpose": {string(purpose)}}.Encode()
-	err := q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: string(purpose), Recipient: email, Subject: verificationMailSubject, Body: fmt.Sprintf(verificationMailBodyTemplate, html.EscapeString(link.String())), ExpiresAt: v.ExpiresAt})
-	return v, err
+	err = s.enqueueVerificationMail(ctx, q, verification, token)
+	return verification, err
 }
+
 func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, input Verification) (failureErr error) {
 	defer func() {
 		failureErr = proofError(failureErr, ErrVerification)
 		s.recordFailure(ctx, r, "auth.verify", failureErr)
 	}()
-	if e := s.limit(ctx, "verify.ip", r.ClientIP, ipRequestLimit, ipRateWindow); e != nil {
-		return e
+	if err := s.limit(ctx, "verify.ip", r.ClientIP, ipRequestLimit, ipRateWindow); err != nil {
+		return err
 	}
-	hash, e := identity.TokenDigest(token, ChallengePrefix)
-	if e != nil {
+	hash, err := identity.TokenDigest(token, ChallengePrefix)
+	if err != nil {
 		return ErrCredentials
 	}
-	v, e := s.queries.FindVerification(ctx, hash)
-	if errors.Is(e, pgx.ErrNoRows) {
+	verification, err := s.queries.FindVerification(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrCredentials
 	}
-	if e != nil {
-		return e
+	if err != nil {
+		return err
 	}
-	if VerificationPurpose(v.Purpose) != input.Purpose {
+	if VerificationPurpose(verification.Purpose) != input.Purpose {
 		return ErrCredentials
 	}
 	var passwordHash string
@@ -70,9 +65,9 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 		if !s.deps.Passwords.Validate(input.NewPassword) {
 			return ErrInvalid
 		}
-		passwordHash, e = s.deps.Passwords.Hash(ctx, input.NewPassword)
-		if e != nil {
-			return e
+		passwordHash, err = s.deps.Passwords.Hash(ctx, input.NewPassword)
+		if err != nil {
+			return err
 		}
 	case VerifyChangeEmail:
 		if input.NewPassword != "" {
@@ -83,38 +78,44 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		u, e := q.LockUser(ctx, v.UserID)
-		if e != nil {
-			return e
+		user, err := q.LockUser(ctx, verification.UserID)
+		if err != nil {
+			return err
 		}
-		if u.AuthVersion != v.AuthVersion || UserStatus(u.Status) == UserDisabled {
+		if user.AuthVersion != verification.AuthVersion || UserStatus(user.Status) == UserDisabled {
 			return ErrCredentials
 		}
 		var notification string
 		switch input.Purpose {
 		case VerifyRegister:
-			u, e = s.completeRegistration(ctx, q, u, v, passwordHash)
+			user, err = s.completeRegistration(ctx, q, user, verification, passwordHash)
 			notification = registrationCompletedNotification
 		case VerifyResetPassword:
-			e = s.completePasswordReset(ctx, q, u, v, passwordHash)
+			err = s.completePasswordReset(ctx, q, user, verification, passwordHash)
 			notification = passwordResetNotification
 		case VerifyChangeEmail:
-			e = s.completeEmailChange(ctx, q, u, v)
+			err = s.completeEmailChange(ctx, q, user, verification)
 		default:
-			e = ErrInvalid
+			err = ErrInvalid
 		}
-		if e != nil {
-			return e
+		if err != nil {
+			return err
 		}
-		if e = q.consumeVerification(ctx, v.ID, u.ID); e != nil {
-			return e
+		if err = q.consumeVerification(ctx, verification.ID, user.ID); err != nil {
+			return err
 		}
 		if notification != "" {
-			if err := q.enqueueSecurityNotification(ctx, u, notification); err != nil {
+			if err := enqueueSecurityNotification(ctx, q, user, notification); err != nil {
 				return err
 			}
 		}
-		r.UserID = u.ID.String()
-		return audit(ctx, q, r, "auth."+string(input.Purpose), AuditSuccess, "user", u.ID.String(), u.ID.String(), "", nil)
+		r.UserID = user.ID.String()
+		return audit(ctx, q, r, auditEvent{
+			Action:       "auth." + string(input.Purpose),
+			Outcome:      AuditSuccess,
+			ResourceType: "user",
+			ResourceID:   user.ID.String(),
+			ScopeSubject: user.ID.String(),
+		})
 	})
 }

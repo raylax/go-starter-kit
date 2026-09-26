@@ -1,11 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +21,64 @@ import (
 type tokenAuthenticator struct {
 	calls int
 	token string
+}
+
+type authenticationFailure struct{ err error }
+
+func (a authenticationFailure) Authenticate(context.Context, string) (identity.Principal, error) {
+	return identity.Principal{}, a.err
+}
+
+func TestAuthenticationFailureDiagnostics(t *testing.T) {
+	for _, test := range []struct {
+		name, reason string
+		err          error
+		status       int
+	}{
+		{name: "依赖故障", reason: "internal_error", err: errors.New("private-authentication-error"), status: http.StatusServiceUnavailable},
+		{name: "请求超时", reason: "deadline_exceeded", err: context.DeadlineExceeded, status: http.StatusGatewayTimeout},
+		{name: "无效凭据", err: identity.ErrUnauthorized, status: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			handler, api := New(Config{RequestTimeout: time.Second}, slog.New(slog.NewJSONHandler(&logs, nil)))
+			huma.Register(api, huma.Operation{
+				OperationID: "diagnostic-auth", Method: http.MethodGet, Path: "/protected",
+				Middlewares: huma.Middlewares{Middleware(api, authenticationFailure{test.err})},
+			}, func(context.Context, *struct{}) (*struct{}, error) {
+				t.Fatal("认证失败后仍然执行了处理函数")
+				return nil, nil
+			})
+			request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			request.Header.Set("Authorization", "Bearer private-session-token")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.status {
+				t.Fatalf("错误响应状态：%d", response.Code)
+			}
+			found := false
+			decoder := json.NewDecoder(&logs)
+			for decoder.More() {
+				var entry map[string]any
+				if err := decoder.Decode(&entry); err != nil {
+					t.Fatal(err)
+				}
+				serialized, err := json.Marshal(entry)
+				if err != nil || strings.Contains(string(serialized), "private-") {
+					t.Fatal("认证日志泄露错误原文或会话令牌")
+				}
+				if entry["msg"] == "authentication failed" {
+					found = true
+					if entry["stage"] != "authenticate_session" || entry["reason_code"] != test.reason || entry["request_id"] != response.Header().Get("X-Request-ID") {
+						t.Fatal("认证诊断缺少分类或请求关联")
+					}
+				}
+			}
+			if found != (test.reason != "") {
+				t.Fatal("依赖失败应记录诊断，无效凭据不应记录基础设施错误")
+			}
+		})
+	}
 }
 
 func (a *tokenAuthenticator) Authenticate(_ context.Context, token string) (identity.Principal, error) {

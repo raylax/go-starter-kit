@@ -8,13 +8,9 @@ import (
 
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/platform/telemetry"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/fx"
 )
 
-// Database 在启动钩子中打开，只能由更晚启动的服务使用。
-// 业务模块接收数据库接口，不依赖此生命周期适配器。
-type Database struct{ *pgxpool.Pool }
 type telemetryReady struct{}
 
 var Module = fx.Module("infrastructure",
@@ -44,12 +40,12 @@ func newDatabase(lc fx.Lifecycle, cfg Config, _ *telemetryReady) *Database {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			var err error
-			database.Pool, err = db.Open(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
+			database.pool, err = db.Open(ctx, cfg.DatabaseURL, cfg.DBMaxConns)
 			return err
 		},
 		OnStop: func(ctx context.Context) error {
 			closed := make(chan struct{})
-			go func() { database.Close(); close(closed) }()
+			go func() { database.pool.Close(); close(closed) }()
 			select {
 			case <-closed:
 				return nil

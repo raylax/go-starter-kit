@@ -19,35 +19,50 @@ import (
 )
 
 func TestAccountHTTP(t *testing.T) {
-	f := newFixture(t)
-	ctx := t.Context()
-	f.call(http.MethodPost, "/v1/auth/register", "", map[string]any{"email": "alice@example.com", "role": "admin"}, http.StatusUnprocessableEntity)
-	alice := f.register("alice@example.com")
-	bob := f.register("bob@example.com")
-	if !strings.HasPrefix(alice.Token, "tk_") || strings.Contains(alice.Token, ".") {
-		t.Fatal("会话令牌格式错误")
-	}
-	me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusOK))
-	if me.User.Role != "user" || !me.User.EmailVerified || len(me.Accounts) != 1 {
-		t.Fatal("注册模型错误")
-	}
-	f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice", "role": "admin"}, http.StatusUnprocessableEntity)
-	f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice"}, http.StatusOK)
-	f.call(http.MethodGet, "/v1/admin/users", alice.Token, nil, http.StatusForbidden)
-	f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID.String(), bob.Token, nil, http.StatusNotFound)
-	f.call(http.MethodGet, "/v1/me", alice.SessionID.String(), nil, http.StatusUnauthorized)
-	f.call(http.MethodGet, "/v1/me", f.challenge("alice@example.com", "register"), nil, http.StatusUnauthorized)
-	f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": f.challenge("alice@example.com", "register"), "purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
-	f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": "alice@example.com", "password": "wrong"}, http.StatusUnauthorized)
-	f.call(http.MethodPost, "/v1/me/reauthenticate", alice.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID.String()}, http.StatusConflict)
+	t.Run("注册与会话隔离", func(t *testing.T) {
+		f := newFixture(t)
+		f.call(http.MethodPost, "/v1/auth/register", "", map[string]any{"email": "alice@example.com", "role": "admin"}, http.StatusUnprocessableEntity)
+		alice := f.register("alice@example.com")
+		bob := f.register("bob@example.com")
+		if !strings.HasPrefix(alice.Token, "tk_") || strings.Contains(alice.Token, ".") {
+			t.Fatal("会话令牌格式错误")
+		}
+		me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusOK))
+		if me.User.Role != "user" || !me.User.EmailVerified || len(me.Accounts) != 1 {
+			t.Fatal("注册模型错误")
+		}
+		var resourceType, resourceID, scopeSubject, actorID string
+		var auditSession uuid.UUID
+		if err := f.pool.QueryRow(t.Context(), "SELECT resource_type, resource_id, scope_subject, actor_id, session_id FROM audit_events WHERE action='auth.login' AND resource_id=$1", alice.SessionID.String()).Scan(&resourceType, &resourceID, &scopeSubject, &actorID, &auditSession); err != nil {
+			t.Fatal(err)
+		}
+		if resourceType != "session" || resourceID != alice.SessionID.String() || scopeSubject != me.User.ID.String() || actorID != me.User.ID.String() || auditSession != alice.SessionID {
+			t.Fatal("登录审计混淆了会话资源、操作用户或归属主体")
+		}
+		f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice", "role": "admin"}, http.StatusUnprocessableEntity)
+		f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice"}, http.StatusOK)
+		f.call(http.MethodGet, "/v1/admin/users", alice.Token, nil, http.StatusForbidden)
+		f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID.String(), bob.Token, nil, http.StatusNotFound)
+		f.call(http.MethodGet, "/v1/me", alice.SessionID.String(), nil, http.StatusUnauthorized)
+		f.call(http.MethodGet, "/v1/me", f.challenge("alice@example.com", "register"), nil, http.StatusUnauthorized)
+		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": f.challenge("alice@example.com", "register"), "purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
+		f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": "alice@example.com", "password": "wrong"}, http.StatusUnauthorized)
+		f.call(http.MethodPost, "/v1/me/reauthenticate", alice.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID.String()}, http.StatusConflict)
+	})
 
 	t.Run("第三方绑定与目的隔离", func(t *testing.T) {
+		f := newFixture(t)
+		alice := f.register("alice@example.com")
+		bob := f.register("bob@example.com")
+		me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusOK))
 		proof := f.reauth(alice.Token, testPassword, "link_account", "demo")
 		flow := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, http.StatusOK))
 		f.call(http.MethodPost, "/v1/me/accounts/link", alice.Token, map[string]any{"provider": "demo", "reauthentication_id": proof}, http.StatusUnprocessableEntity)
 		u, _ := url.Parse(flow.AuthorizationURL)
 		f.call(http.MethodPost, "/v1/auth/oauth/callback", "", map[string]any{"token": flow.Token, "code": "alice-social", "state": "wrong"}, http.StatusUnprocessableEntity)
+		started := time.Now()
 		pending := f.callback(flow, "alice-social", http.StatusOK)
+		f.assertFlowAuthenticatedAt(flow.FlowID, started, time.Now())
 		if pending.Result != "link_pending" {
 			t.Fatal("绑定回调不应直接创建会话")
 		}
@@ -76,9 +91,16 @@ func TestAccountHTTP(t *testing.T) {
 		conflict := decode[account.AuthFlowResponse](t, f.call(http.MethodPost, "/v1/me/accounts/link", bob.Token, map[string]any{"provider": "demo", "reauthentication_id": bobProof}, http.StatusOK))
 		f.callback(conflict, "alice-social", http.StatusOK)
 		f.call(http.MethodPost, "/v1/me/accounts/link/confirm", bob.Token, map[string]any{"flow_id": conflict.FlowID}, http.StatusConflict)
+		var count int
+		if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM audit_events WHERE action='account.link' AND outcome='success'").Scan(&count); err != nil || count != 1 {
+			t.Fatalf("绑定审计重复或缺失: %d %v", count, err)
+		}
 	})
 
 	t.Run("改密原子性与即时撤销", func(t *testing.T) {
+		f := newFixture(t)
+		ctx := t.Context()
+		alice := f.register("alice@example.com")
 		if _, e := f.pool.Exec(ctx, "ALTER TABLE audit_events RENAME TO test_unavailable_audit_events"); e != nil {
 			t.Fatal(e)
 		}
@@ -89,35 +111,57 @@ func TestAccountHTTP(t *testing.T) {
 		}
 		f.call(http.MethodPut, "/v1/me/password", alice.Token, map[string]any{"current_password": testPassword, "new_password": "a different secure phrase"}, http.StatusNoContent)
 		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
-		alice = f.login("alice@example.com", "a different secure phrase")
+		f.login("alice@example.com", "a different secure phrase")
 	})
 
 	t.Run("密码恢复与验证用途", func(t *testing.T) {
+		f := newFixture(t)
+		alice := f.register("alice@example.com")
+		const recoveredPassword = "a password recovered through email"
 		f.call(http.MethodPost, "/v1/auth/password/forgot", "", map[string]any{"email": "missing@example.com"}, http.StatusAccepted)
 		f.call(http.MethodPost, "/v1/auth/password/forgot", "", map[string]any{"email": "alice@example.com"}, http.StatusAccepted)
 		token := f.challenge("alice@example.com", "reset_password")
 		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email", "new_password": testPassword}, http.StatusUnprocessableEntity)
 		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
-		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "reset_password", "new_password": testPassword}, http.StatusNoContent)
+		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "reset_password", "new_password": recoveredPassword}, http.StatusNoContent)
 		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
-		alice = f.login("alice@example.com", testPassword)
+		f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": "alice@example.com", "password": testPassword}, http.StatusUnauthorized)
+		f.login("alice@example.com", recoveredPassword)
 	})
 	t.Run("邮箱变更与重放", func(t *testing.T) {
+		f := newFixture(t)
+		alice := f.register("alice@example.com")
+		var previousNotifications int
+		if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM mail_outbox WHERE kind='security_notification' AND recipient=$1", "alice@example.com").Scan(&previousNotifications); err != nil {
+			t.Fatal(err)
+		}
 		proof := f.reauth(alice.Token, testPassword, "change_email", "newalice@example.com")
 		f.call(http.MethodPost, "/v1/me/email", alice.Token, map[string]any{"email": "newalice@example.com", "reauthentication_id": proof}, http.StatusAccepted)
 		token := f.challenge("newalice@example.com", "change_email")
 		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email"}, http.StatusNoContent)
+		var oldRecipientNotifications, newRecipientNotifications int
+		if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FILTER (WHERE recipient=$1), count(*) FILTER (WHERE recipient=$2) FROM mail_outbox WHERE kind='security_notification'", "alice@example.com", "newalice@example.com").Scan(&oldRecipientNotifications, &newRecipientNotifications); err != nil {
+			t.Fatal(err)
+		}
+		if oldRecipientNotifications != previousNotifications+1 || newRecipientNotifications != 0 {
+			t.Fatal("邮箱变更必须恰好向原已验证邮箱发送一封安全通知")
+		}
 		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": token, "purpose": "change_email"}, http.StatusUnprocessableEntity)
-		alice = f.login("newalice@example.com", testPassword)
+		f.login("newalice@example.com", testPassword)
 	})
 	t.Run("管理员与会话撤销", func(t *testing.T) {
+		f := newFixture(t)
+		ctx := t.Context()
+		alice := f.register("alice@example.com")
+		bob := f.register("bob@example.com")
+		me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusOK))
 		bobMe := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusOK))
 		if _, e := f.pool.Exec(ctx, "UPDATE users SET role='admin', auth_version=auth_version+1 WHERE id=$1", me.User.ID); e != nil {
 			t.Fatal(e)
 		}
 		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
-		alice = f.login("newalice@example.com", testPassword)
+		alice = f.login("alice@example.com", testPassword)
 		f.call(http.MethodGet, "/v1/admin/users", alice.Token, nil, http.StatusOK)
 		f.call(http.MethodPatch, "/v1/admin/users/"+bobMe.User.ID.String()+"/status", alice.Token, map[string]any{"status": "disabled"}, http.StatusOK)
 		f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusUnauthorized)
@@ -129,17 +173,18 @@ func TestAccountHTTP(t *testing.T) {
 		f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID.String(), alice.Token, nil, http.StatusNoContent)
 		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 	})
-	var count int
-	if e := f.pool.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE action='account.link' AND outcome='success'").Scan(&count); e != nil || count != 1 {
-		t.Fatalf("绑定审计重复或缺失: %d %v", count, e)
-	}
-	if e := f.pool.QueryRow(ctx, "SELECT count(*) FROM user_sessions WHERE octet_length(token_hash)<>32").Scan(&count); e != nil || count != 0 {
-		t.Fatal("会话原文持久化")
-	}
-	f.pool.Close()
-	if _, _, e := f.s.AuthenticateSession(ctx, alice.Token); e == nil || errors.Is(e, identity.ErrUnauthorized) {
-		t.Fatal("数据库故障被放行或混同无效凭据")
-	}
+	t.Run("会话摘要与数据库故障", func(t *testing.T) {
+		f := newFixture(t)
+		alice := f.register("alice@example.com")
+		var count int
+		if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM user_sessions WHERE octet_length(token_hash)<>32").Scan(&count); err != nil || count != 0 {
+			t.Fatal("会话原文持久化")
+		}
+		f.pool.Close()
+		if _, _, err := f.s.AuthenticateSession(t.Context(), alice.Token); err == nil || errors.Is(err, identity.ErrUnauthorized) {
+			t.Fatal("数据库故障被放行或混同无效凭据")
+		}
+	})
 }
 
 func TestChallengeConcurrencyAndSessionExpiry(t *testing.T) {
@@ -200,7 +245,10 @@ func TestFederatedUserPasswordAndUnlink(t *testing.T) {
 		result := decode[account.UserReauthenticateResponse](t, f.call(http.MethodPost, "/v1/me/reauthenticate", session.Token, map[string]any{
 			"method": "oauth", "account_id": social, "operation": operation, "target": target,
 		}, http.StatusOK))
-		return *f.callback(*result.Flow, "social-only", http.StatusOK).ReauthenticationID
+		started := time.Now()
+		reauthenticated := f.callback(*result.Flow, "social-only", http.StatusOK)
+		f.assertFlowAuthenticatedAt(result.Flow.FlowID, started, time.Now())
+		return *reauthenticated.ReauthenticationID
 	}
 	beforeEmail := proof("set_password", "credential")
 	f.call(http.MethodPut, "/v1/me/password", session.Token, map[string]any{"new_password": testPassword, "reauthentication_id": beforeEmail}, http.StatusUnprocessableEntity)
@@ -311,7 +359,7 @@ func (f testFederation) Verify(_ context.Context, id, version, code, verifier st
 	if code == "invalid" {
 		return account.VerifiedIdentity{}, account.ErrCredentials
 	}
-	return account.VerifiedIdentity{Namespace: "https://" + id + ".example", Subject: code, Name: "external user", AuthenticatedAt: time.Now()}, nil
+	return account.VerifiedIdentity{Namespace: "https://" + id + ".example", Subject: code, Name: "external user"}, nil
 }
 
 type pausedPasswords struct {

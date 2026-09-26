@@ -14,7 +14,6 @@ import (
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/example/go-starter-kit/internal/identity"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -25,131 +24,55 @@ const (
 
 type protocolState struct{ Verifier string }
 
-func (s *Service) StartLogin(ctx context.Context, r Request, provider string, purpose FlowPurpose) (FlowResult, error) {
-	if !purpose.PublicStart() {
-		return FlowResult{}, ErrInvalid
-	}
-	if e := s.limit(ctx, "oauth.ip", r.ClientIP, ipRequestLimit, ipRateWindow); e != nil {
-		return FlowResult{}, e
-	}
-	return s.startFlow(ctx, r, purpose, provider, "", "", nil, nil)
-}
-func (s *Service) StartLink(ctx context.Context, r Request, provider string, reauthID uuid.UUID) (FlowResult, error) {
-	if e := s.entryLimit(ctx, r, "link", r.UserID); e != nil {
-		return FlowResult{}, e
-	}
-	return s.startFlow(ctx, r, FlowLinkIdentity, provider, OperationLinkAccount, provider, nil, &reauthID)
-}
-func (s *Service) startFlow(ctx context.Context, r Request, purpose FlowPurpose, provider string, operation Operation, target string, a *sqlc.Account, reauthID *uuid.UUID) (FlowResult, error) {
-	if !s.deps.Federation.Enabled(provider) {
-		return FlowResult{}, ErrInvalid
-	}
-	id := uuid.New()
-	token, hash := identity.NewToken(FlowPrefix)
-	state, stateHash := identity.NewToken("")
-	verifier, _ := identity.NewToken("")
-	authorizationURL, version, e := s.deps.Federation.Start(ctx, provider, state, verifier)
-	if e != nil {
-		return FlowResult{}, e
-	}
-	// 协议状态以 JSON 原文短期保存，流程完成或失败时清除。
-	protocol, _ := json.Marshal(protocolState{Verifier: verifier})
-	var result FlowResult
-	e = db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
-		q := newStore(tx)
-		params := sqlc.CreateFlowParams{ID: id, Purpose: string(purpose), TokenHash: hash, ProviderID: provider, ConfigVersion: version, StateHash: stateHash, ProtocolState: protocol, Status: string(FlowPending), Operation: string(operation), Target: target, ReauthenticationID: reauthID}
-		if purpose == FlowLinkIdentity || purpose == FlowReauthenticate {
-			u, session, e := s.readSelf(ctx, q, r)
-			if e != nil {
-				return e
-			}
-			params.UserID = &u.ID
-			params.SessionID = &session.ID
-			params.AuthVersion = u.AuthVersion
-			if purpose == FlowLinkIdentity {
-				if reauthID == nil {
-					return ErrCredentials
-				}
-				if _, e = s.authorization(ctx, q, r, *reauthID, OperationLinkAccount, provider, nil); e != nil {
-					return e
-				}
-			} else {
-				if a == nil {
-					return ErrCredentials
-				}
-				current, e := q.GetAccount(ctx, sqlc.GetAccountParams{ID: a.ID, UserID: u.ID})
-				if e != nil {
-					return credentialLookupError(e)
-				}
-				if current.Version != a.Version || !s.accountEnabled(current) {
-					return ErrCredentials
-				}
-				params.AccountID = &a.ID
-				params.AccountVersion = a.Version
-			}
-		}
-		row, e := q.CreateFlow(ctx, params)
-		if e != nil {
-			return e
-		}
-		if purpose == FlowLinkIdentity {
-			// 先插入流程完成外键检查，再以条件更新认领；竞争失败时整体回滚。
-			if e := q.claimAuthorization(ctx, *reauthID, id); e != nil {
-				return proofError(e, ErrReauthentication)
-			}
-		}
-		result = FlowResult{ID: id, Token: token, AuthorizationURL: authorizationURL, ExpiresAt: row.ExpiresAt}
-		return nil
-	})
-	return result, e
-}
-
-func (s *Service) Callback(ctx context.Context, r Request, token, code, state string) (_ AuthenticationResult, failureErr error) {
+func (s *Service) Callback(ctx context.Context, r Request, token, code, state string) (_ CallbackResult, failureErr error) {
 	defer func() {
 		failureErr = proofError(failureErr, ErrFlow)
 		s.recordFailure(ctx, r, "auth.oauth_callback", failureErr)
 	}()
-	if e := s.limit(ctx, "callback.ip", r.ClientIP, ipRequestLimit, ipRateWindow); e != nil {
-		return AuthenticationResult{}, e
+	if err := s.limit(ctx, "callback.ip", r.ClientIP, ipRequestLimit, ipRateWindow); err != nil {
+		return CallbackResult{}, err
 	}
-	hash, e := identity.TokenDigest(token, FlowPrefix)
-	if e != nil {
-		return AuthenticationResult{}, ErrCredentials
+	hash, err := identity.TokenDigest(token, FlowPrefix)
+	if err != nil {
+		return CallbackResult{}, ErrCredentials
 	}
-	f, e := s.queries.FindFlow(ctx, hash)
-	if errors.Is(e, pgx.ErrNoRows) {
-		return AuthenticationResult{}, ErrCredentials
+	flow, err := s.queries.FindFlow(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CallbackResult{}, ErrCredentials
 	}
-	if e != nil {
-		return AuthenticationResult{}, e
+	if err != nil {
+		return CallbackResult{}, err
 	}
-	if FlowStatus(f.Status) != FlowPending || len(code) == 0 || len(code) > maxOAuthCodeBytes || len(state) > maxOAuthStateBytes || subtle.ConstantTimeCompare(identity.Digest(state), f.StateHash) != 1 {
-		return AuthenticationResult{}, ErrCredentials
+	if FlowStatus(flow.Status) != FlowPending || len(code) == 0 || len(code) > maxOAuthCodeBytes || len(state) > maxOAuthStateBytes {
+		return CallbackResult{}, ErrCredentials
 	}
-	if s.deps.Federation.Version(f.ProviderID) != f.ConfigVersion {
-		return AuthenticationResult{}, ErrCredentials
+	if subtle.ConstantTimeCompare(identity.Digest(state), flow.StateHash) != 1 {
+		return CallbackResult{}, ErrCredentials
 	}
-	if e := s.queries.claimPendingFlow(ctx, f.ID); e != nil {
-		return AuthenticationResult{}, e
+	if s.deps.Federation.Version(flow.ProviderID) != flow.ConfigVersion {
+		return CallbackResult{}, ErrCredentials
+	}
+	if err := s.queries.claimPendingFlow(ctx, flow.ID); err != nil {
+		return CallbackResult{}, err
 	}
 	completed := false
 	defer func() {
 		if !completed {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			defer cancel()
-			_ = s.queries.FailFlow(cleanup, f.ID)
+			_ = s.queries.FailFlow(cleanup, flow.ID)
 		}
 	}()
 	var protocol protocolState
-	if json.Unmarshal(f.ProtocolState, &protocol) != nil {
-		return AuthenticationResult{}, ErrCredentials
+	if json.Unmarshal(flow.ProtocolState, &protocol) != nil {
+		return CallbackResult{}, ErrCredentials
 	}
-	verified, e := s.deps.Federation.Verify(ctx, f.ProviderID, f.ConfigVersion, code, protocol.Verifier)
-	if e != nil {
-		return AuthenticationResult{}, e
+	verified, err := s.deps.Federation.Verify(ctx, flow.ProviderID, flow.ConfigVersion, code, protocol.Verifier)
+	if err != nil {
+		return CallbackResult{}, err
 	}
 	if verified.Subject == "" || len(verified.Subject) > maxProviderSubjectBytes || verified.Namespace == "" || len(verified.Namespace) > maxProviderNamespaceBytes {
-		return AuthenticationResult{}, ErrCredentials
+		return CallbackResult{}, ErrCredentials
 	}
 	if !utf8.ValidString(verified.Name) {
 		verified.Name = ""
@@ -159,43 +82,49 @@ func (s *Service) Callback(ctx context.Context, r Request, token, code, state st
 		name = name[:maxDisplayNameRunes]
 	}
 	verified.Name = string(name)
-	var result AuthenticationResult
-	switch FlowPurpose(f.Purpose) {
+	var result CallbackResult
+	switch FlowPurpose(flow.Purpose) {
 	case FlowLogin, FlowRegister:
-		result, e = s.completeLogin(ctx, r, f, verified)
+		result, err = s.completeLogin(ctx, r, flow, verified)
 	case FlowReauthenticate, FlowLinkIdentity:
-		result, e = s.completeBoundFlow(ctx, r, f, verified)
+		result, err = s.completeBoundFlow(ctx, r, flow, verified)
 	default:
-		e = ErrCredentials
+		err = ErrCredentials
 	}
-	completed = e == nil
-	return result, e
+	completed = err == nil
+	return result, err
 }
 
 // completeBoundFlow 在同一事务内复核原会话，并完成已绑定用户的证明。
-func (s *Service) completeBoundFlow(ctx context.Context, r Request, f sqlc.AuthFlow, verified VerifiedIdentity) (AuthenticationResult, error) {
-	var result AuthenticationResult
+func (s *Service) completeBoundFlow(ctx context.Context, r Request, flow sqlc.AuthFlow, verified VerifiedIdentity) (CallbackResult, error) {
+	var result CallbackResult
 	err := db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		if f.UserID == nil || f.SessionID == nil {
+		if flow.UserID == nil || flow.SessionID == nil {
 			return ErrCredentials
 		}
-		bound := Request{Subject: authorization.Subject{UserID: f.UserID.String(), SessionID: f.SessionID.String()}, RequestID: r.RequestID}
-		u, _, err := s.readSelf(ctx, q, bound)
+		bound := Request{
+			Subject: authorization.Subject{
+				UserID:    flow.UserID.String(),
+				SessionID: flow.SessionID.String(),
+			},
+			RequestID: r.RequestID,
+		}
+		user, _, err := s.readSelf(ctx, q, bound)
 		if errors.Is(err, apperror.ErrUnauthenticated) {
 			return ErrFlow
 		}
 		if err != nil {
 			return err
 		}
-		if u.AuthVersion != f.AuthVersion {
+		if user.AuthVersion != flow.AuthVersion {
 			return ErrCredentials
 		}
-		switch FlowPurpose(f.Purpose) {
+		switch FlowPurpose(flow.Purpose) {
 		case FlowReauthenticate:
-			result, err = s.completeReauthentication(ctx, q, u, f, verified)
+			result, err = s.completeReauthentication(ctx, q, user, flow, verified)
 		case FlowLinkIdentity:
-			result, err = s.completeLinkProof(ctx, q, bound, f, verified)
+			result, err = s.completeLinkProof(ctx, q, bound, flow, verified)
 		default:
 			err = ErrCredentials
 		}
@@ -204,81 +133,96 @@ func (s *Service) completeBoundFlow(ctx context.Context, r Request, f sqlc.AuthF
 	return result, err
 }
 
-func (s *Service) completeReauthentication(ctx context.Context, q *store, u sqlc.User, f sqlc.AuthFlow, v VerifiedIdentity) (AuthenticationResult, error) {
-	if f.AccountID == nil {
-		return AuthenticationResult{}, ErrCredentials
+func (s *Service) completeReauthentication(ctx context.Context, q *store, user sqlc.User, flow sqlc.AuthFlow, verified VerifiedIdentity) (CallbackResult, error) {
+	if flow.AccountID == nil {
+		return CallbackResult{}, ErrCredentials
 	}
-	a, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: *f.AccountID, UserID: u.ID})
+	account, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: *flow.AccountID, UserID: user.ID})
 	if err != nil {
-		return AuthenticationResult{}, credentialLookupError(err)
+		return CallbackResult{}, credentialLookupError(err)
 	}
-	if a.Version != f.AccountVersion || a.ProviderNamespace != v.Namespace || a.ProviderAccountID != v.Subject || !s.accountEnabled(a) {
-		return AuthenticationResult{}, ErrCredentials
+	if account.Version != flow.AccountVersion || account.ProviderNamespace != verified.Namespace || account.ProviderAccountID != verified.Subject || !s.accountEnabled(account) {
+		return CallbackResult{}, ErrCredentials
 	}
-	if err := q.verifyFlow(ctx, f.ID, FlowAuthorized, v); err != nil {
-		return AuthenticationResult{}, err
+	if err := q.verifyFlow(ctx, flow.ID, FlowAuthorized, verified); err != nil {
+		return CallbackResult{}, err
 	}
-	return AuthenticationResult{Result: ResultReauthenticated, ReauthenticationID: f.ID}, nil
+	return reauthenticatedCallback(flow.ID), nil
 }
 
-func (s *Service) completeLinkProof(ctx context.Context, q *store, bound Request, f sqlc.AuthFlow, v VerifiedIdentity) (AuthenticationResult, error) {
-	if f.ReauthenticationID == nil {
-		return AuthenticationResult{}, ErrCredentials
+func (s *Service) completeLinkProof(ctx context.Context, q *store, bound Request, flow sqlc.AuthFlow, verified VerifiedIdentity) (CallbackResult, error) {
+	if flow.ReauthenticationID == nil {
+		return CallbackResult{}, ErrCredentials
 	}
-	if _, err := s.authorization(ctx, q, bound, *f.ReauthenticationID, OperationLinkAccount, f.ProviderID, &f.ID); err != nil {
-		return AuthenticationResult{}, err
+	if _, err := s.authorization(ctx, q, bound, *flow.ReauthenticationID, OperationLinkAccount, flow.ProviderID, &flow.ID); err != nil {
+		return CallbackResult{}, err
 	}
-	if err := q.verifyFlow(ctx, f.ID, FlowVerified, v); err != nil {
-		return AuthenticationResult{}, err
+	if err := q.verifyFlow(ctx, flow.ID, FlowVerified, verified); err != nil {
+		return CallbackResult{}, err
 	}
-	return AuthenticationResult{Result: ResultLinkPending, Flow: FlowResult{ID: f.ID}, Provider: f.ProviderID, Name: v.Name}, nil
+	return linkPendingCallback(LinkConfirmation{FlowID: flow.ID, Provider: flow.ProviderID, Name: verified.Name}), nil
 }
 
-func (s *Service) completeLogin(ctx context.Context, r Request, f sqlc.AuthFlow, v VerifiedIdentity) (AuthenticationResult, error) {
-	a, findErr := s.queries.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: v.Namespace, ProviderAccountID: v.Subject})
+func (s *Service) completeLogin(ctx context.Context, r Request, flow sqlc.AuthFlow, verified VerifiedIdentity) (CallbackResult, error) {
+	account, findErr := s.queries.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: verified.Namespace, ProviderAccountID: verified.Subject})
 	if findErr != nil && !errors.Is(findErr, pgx.ErrNoRows) {
-		return AuthenticationResult{}, findErr
+		return CallbackResult{}, findErr
 	}
-	if errors.Is(findErr, pgx.ErrNoRows) && FlowPurpose(f.Purpose) != FlowRegister {
-		return AuthenticationResult{}, ErrRegistrationRequired
+	if errors.Is(findErr, pgx.ErrNoRows) && FlowPurpose(flow.Purpose) != FlowRegister {
+		return CallbackResult{}, ErrRegistrationRequired
 	}
-	var result AuthenticationResult
-	e := db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
+	var result CallbackResult
+	err := db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		var u sqlc.User
-		var e error
+		var user sqlc.User
+		var err error
 		if findErr == nil {
-			u, e = q.LockUser(ctx, a.UserID)
-			if e != nil {
-				return e
+			user, err = q.LockUser(ctx, account.UserID)
+			if err != nil {
+				return err
 			}
-			current, e := q.GetAccount(ctx, sqlc.GetAccountParams{ID: a.ID, UserID: a.UserID})
-			if e != nil {
-				return credentialLookupError(e)
+			current, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: account.UserID})
+			if err != nil {
+				return credentialLookupError(err)
 			}
-			if current.Version != a.Version || UserStatus(u.Status) != UserActive || !s.accountEnabled(current) {
+			if current.Version != account.Version || UserStatus(user.Status) != UserActive || !s.accountEnabled(current) {
 				return ErrCredentials
 			}
-			a = current
+			account = current
 		} else {
-			u, e = q.CreateFederatedUser(ctx, v.Name)
-			if e != nil {
-				return e
+			user, err = q.CreateFederatedUser(ctx, verified.Name)
+			if err != nil {
+				return err
 			}
-			a, e = q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: u.ID, ProviderID: f.ProviderID, ProviderNamespace: v.Namespace, ProviderAccountID: v.Subject})
-			if e != nil {
-				return e
+			account, err = q.CreateAccount(ctx, sqlc.CreateAccountParams{
+				UserID:            user.ID,
+				ProviderID:        flow.ProviderID,
+				ProviderNamespace: verified.Namespace,
+				ProviderAccountID: verified.Subject,
+			})
+			if err != nil {
+				return err
 			}
-			if e = audit(ctx, q, Request{Subject: authorization.Subject{UserID: u.ID.String()}, RequestID: r.RequestID}, "auth.register", AuditSuccess, "user", u.ID.String(), u.ID.String(), "", nil); e != nil {
-				return e
+			registrationRequest := Request{
+				Subject:   authorization.Subject{UserID: user.ID.String()},
+				RequestID: r.RequestID,
+			}
+			if err = audit(ctx, q, registrationRequest, auditEvent{
+				Action:       "auth.register",
+				Outcome:      AuditSuccess,
+				ResourceType: "user",
+				ResourceID:   user.ID.String(),
+				ScopeSubject: user.ID.String(),
+			}); err != nil {
+				return err
 			}
 		}
-		if e := q.consumeFlow(ctx, f.ID, FlowProcessing); e != nil {
-			return e
+		if err := q.consumeFlow(ctx, flow.ID, FlowProcessing); err != nil {
+			return err
 		}
-		session, e := s.newSession(ctx, q, r, u, a, MethodOAuth)
-		result = AuthenticationResult{Result: ResultSession, Session: session}
-		return e
+		session, err := s.newSession(ctx, q, r, user, account, MethodOAuth)
+		result = sessionCallback(session)
+		return err
 	})
-	return result, e
+	return result, err
 }

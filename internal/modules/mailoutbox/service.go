@@ -2,8 +2,9 @@ package mailoutbox
 
 import (
 	"fmt"
-	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"log/slog"
+
+	"github.com/example/go-starter-kit/internal/db/sqlc"
 )
 
 type Service struct {

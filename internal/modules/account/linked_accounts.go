@@ -10,12 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const (
-	maxLoginAccounts = 10
-
-	accountLinkedNotification   = "新的第三方登录账号已绑定。"
-	accountUnlinkedNotification = "一个登录账号已解除绑定，请使用保留的方式重新登录。"
-)
+const maxLoginAccounts = 10
 
 func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) (failureErr error) {
 	defer func() {
@@ -24,89 +19,105 @@ func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) 
 	}()
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		u, session, e := s.lockSelf(ctx, q, r)
-		if e != nil {
-			return e
+		user, session, err := s.lockSelf(ctx, q, r)
+		if err != nil {
+			return err
 		}
-		f, e := q.GetFlow(ctx, flowID)
-		if e != nil {
-			return credentialLookupError(e)
+		flow, err := q.GetFlow(ctx, flowID)
+		if err != nil {
+			return credentialLookupError(err)
 		}
-		if FlowPurpose(f.Purpose) != FlowLinkIdentity || f.UserID == nil || *f.UserID != u.ID || f.SessionID == nil || *f.SessionID != session.ID || f.AuthVersion != u.AuthVersion || f.ReauthenticationID == nil {
+		if FlowPurpose(flow.Purpose) != FlowLinkIdentity || flow.UserID == nil || flow.SessionID == nil || flow.ReauthenticationID == nil {
 			return ErrCredentials
 		}
-		if FlowStatus(f.Status) == FlowConsumed {
-			a, e := q.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: f.VerifiedNamespace, ProviderAccountID: f.VerifiedSubject})
-			if e != nil {
-				return credentialLookupError(e)
+		if *flow.UserID != user.ID || *flow.SessionID != session.ID || flow.AuthVersion != user.AuthVersion {
+			return ErrCredentials
+		}
+		if FlowStatus(flow.Status) == FlowConsumed {
+			account, err := q.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: flow.VerifiedNamespace, ProviderAccountID: flow.VerifiedSubject})
+			if err != nil {
+				return credentialLookupError(err)
 			}
-			if a.UserID == u.ID {
+			if account.UserID == user.ID {
 				return nil
 			}
 			return ErrCredentials
 		}
-		if FlowStatus(f.Status) != FlowVerified || s.deps.Federation.Version(f.ProviderID) != f.ConfigVersion {
+		if FlowStatus(flow.Status) != FlowVerified || s.deps.Federation.Version(flow.ProviderID) != flow.ConfigVersion {
 			return ErrCredentials
 		}
-		proof, e := s.authorization(ctx, q, r, *f.ReauthenticationID, OperationLinkAccount, f.ProviderID, &f.ID)
-		if e != nil {
-			return e
+		proof, err := s.authorization(ctx, q, r, *flow.ReauthenticationID, OperationLinkAccount, flow.ProviderID, &flow.ID)
+		if err != nil {
+			return err
 		}
-		a, e := q.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: f.VerifiedNamespace, ProviderAccountID: f.VerifiedSubject})
-		if e == nil {
-			if a.UserID != u.ID {
+		account, err := q.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: flow.VerifiedNamespace, ProviderAccountID: flow.VerifiedSubject})
+		if err == nil {
+			if account.UserID != user.ID {
 				return ErrConflict
 			}
-		} else if errors.Is(e, pgx.ErrNoRows) {
-			rows, e := q.ListAccounts(ctx, u.ID)
-			if e != nil {
-				return e
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			rows, err := q.ListAccounts(ctx, user.ID)
+			if err != nil {
+				return err
 			}
 			if len(rows) >= maxLoginAccounts {
 				return ErrConflict
 			}
-			a, e = q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: u.ID, ProviderID: f.ProviderID, ProviderNamespace: f.VerifiedNamespace, ProviderAccountID: f.VerifiedSubject})
-			if e != nil {
-				return e
+			account, err = q.CreateAccount(ctx, sqlc.CreateAccountParams{
+				UserID:            user.ID,
+				ProviderID:        flow.ProviderID,
+				ProviderNamespace: flow.VerifiedNamespace,
+				ProviderAccountID: flow.VerifiedSubject,
+			})
+			if err != nil {
+				return err
 			}
 		} else {
-			return e
-		}
-		if e = finishAuthorization(ctx, q, proof); e != nil {
-			return e
-		}
-		if e = finishAuthorization(ctx, q, f); e != nil {
-			return e
-		}
-		if err := q.enqueueSecurityNotification(ctx, u, accountLinkedNotification); err != nil {
 			return err
 		}
-		metadata := accountProviderAuditMetadata{Provider: f.ProviderID}
-		return audit(ctx, q, r, "account.link", AuditSuccess, "account", a.ID.String(), u.ID.String(), "", metadata)
+		if err = finishAuthorization(ctx, q, proof); err != nil {
+			return err
+		}
+		if err = finishAuthorization(ctx, q, flow); err != nil {
+			return err
+		}
+		if err := enqueueSecurityNotification(ctx, q, user, accountLinkedNotification); err != nil {
+			return err
+		}
+		metadata := accountProviderAuditMetadata{Provider: flow.ProviderID}
+		return audit(ctx, q, r, auditEvent{
+			Action:       "account.link",
+			Outcome:      AuditSuccess,
+			ResourceType: "account",
+			ResourceID:   account.ID.String(),
+			ScopeSubject: user.ID.String(),
+			Metadata:     metadata,
+		})
 	})
 }
+
 func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID uuid.UUID) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "account.unlink", &failureErr)
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		u, _, e := s.lockSelf(ctx, q, r)
-		if e != nil {
-			return e
+		user, _, err := s.lockSelf(ctx, q, r)
+		if err != nil {
+			return err
 		}
-		a, e := q.GetAccount(ctx, sqlc.GetAccountParams{ID: id, UserID: u.ID})
-		if e != nil {
-			return e
+		account, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: id, UserID: user.ID})
+		if err != nil {
+			return err
 		}
-		proof, e := s.authorization(ctx, q, r, reauthID, OperationUnlinkAccount, id.String(), nil)
-		if e != nil {
-			return e
+		proof, err := s.authorization(ctx, q, r, reauthID, OperationUnlinkAccount, id.String(), nil)
+		if err != nil {
+			return err
 		}
 		if proof.AccountID == nil || *proof.AccountID == id {
 			return ErrLastAccount
 		}
-		rows, e := q.ListAccounts(ctx, u.ID)
-		if e != nil {
-			return e
+		rows, err := q.ListAccounts(ctx, user.ID)
+		if err != nil {
+			return err
 		}
 		usable := 0
 		for _, row := range rows {
@@ -117,24 +128,31 @@ func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID uuid.UUID)
 		if usable == 0 {
 			return ErrLastAccount
 		}
-		if _, e = q.RevokeAccount(ctx, sqlc.RevokeAccountParams{ID: id, UserID: u.ID}); e != nil {
-			return e
-		}
-		if e = finishAuthorization(ctx, q, proof); e != nil {
-			return e
-		}
-		if e = s.invalidate(ctx, q, u.ID); e != nil {
-			return e
-		}
-		if err := q.enqueueSecurityNotification(ctx, u, accountUnlinkedNotification); err != nil {
+		if _, err = q.RevokeAccount(ctx, sqlc.RevokeAccountParams{ID: id, UserID: user.ID}); err != nil {
 			return err
 		}
-		metadata := accountProviderAuditMetadata{Provider: a.ProviderID}
-		return audit(ctx, q, r, "account.unlink", AuditSuccess, "account", id.String(), u.ID.String(), "", metadata)
+		if err = finishAuthorization(ctx, q, proof); err != nil {
+			return err
+		}
+		if err = s.invalidate(ctx, q, user.ID); err != nil {
+			return err
+		}
+		if err := enqueueSecurityNotification(ctx, q, user, accountUnlinkedNotification); err != nil {
+			return err
+		}
+		metadata := accountProviderAuditMetadata{Provider: account.ProviderID}
+		return audit(ctx, q, r, auditEvent{
+			Action:       "account.unlink",
+			Outcome:      AuditSuccess,
+			ResourceType: "account",
+			ResourceID:   id.String(),
+			ScopeSubject: user.ID.String(),
+			Metadata:     metadata,
+		})
 	})
 }
 
 // accountEnabled 判断未撤销账号的登录能力是否仍启用。
-func (s *Service) accountEnabled(a sqlc.Account) bool {
-	return a.ProviderID == CredentialProvider || (s.deps.Federation.Enabled(a.ProviderID))
+func (s *Service) accountEnabled(account sqlc.Account) bool {
+	return account.ProviderID == CredentialProvider || (s.deps.Federation.Enabled(account.ProviderID))
 }

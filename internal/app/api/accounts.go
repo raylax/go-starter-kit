@@ -25,37 +25,42 @@ func newAccounts(cfg Config, database account.Database, authorizer authorization
 	deps := account.Dependencies{Authorizer: authorizer, Passwords: hasher, Logger: logger}
 	var providers []federation.Config
 	if cfg.AuthProvidersFile != "" {
-		data, e := os.ReadFile(cfg.AuthProvidersFile)
-		if e != nil {
-			return nil, e
+		data, err := os.ReadFile(cfg.AuthProvidersFile)
+		if err != nil {
+			return nil, err
 		}
-		if e = json.Unmarshal(data, &providers); e != nil {
+		if err = json.Unmarshal(data, &providers); err != nil {
 			return nil, fmt.Errorf("第三方提供商配置文件无效")
 		}
 		for i := range providers {
-			p := &providers[i]
-			secret, e := os.ReadFile(p.ClientSecretFile)
-			if e != nil {
+			provider := &providers[i]
+			secret, err := os.ReadFile(provider.ClientSecretFile)
+			if err != nil {
 				return nil, fmt.Errorf("读取提供商客户端密钥失败")
 			}
-			p.ClientSecret = strings.TrimSpace(string(secret))
+			provider.ClientSecret = strings.TrimSpace(string(secret))
 		}
 	}
-	registry, e := federation.New(providers)
-	if e != nil {
-		return nil, e
+	registry, err := federation.New(providers)
+	if err != nil {
+		return nil, err
 	}
 	deps.Federation = federationAdapter{registry}
-	return account.NewService(database, account.Options{IdleTTL: cfg.AuthSessionIdleTTL, MaxTTL: cfg.AuthSessionMaxTTL, FrontendURL: cfg.FrontendURL}, deps)
+	return account.NewService(database, account.Options{
+		IdleTTL:     cfg.AuthSessionIdleTTL,
+		MaxTTL:      cfg.AuthSessionMaxTTL,
+		FrontendURL: cfg.FrontendURL,
+	}, deps)
 }
-func mapProviderError(e error) error {
-	if errors.Is(e, federation.ErrProof) {
+
+func mapProviderError(err error) error {
+	if errors.Is(err, federation.ErrProof) {
 		return account.ErrCredentials
 	}
-	if errors.Is(e, federation.ErrUnavailable) {
-		return fmt.Errorf("%w: %w", account.ErrUnavailable, e)
+	if errors.Is(err, federation.ErrUnavailable) {
+		return fmt.Errorf("%w: %w", account.ErrUnavailable, err)
 	}
-	return e
+	return err
 }
 
 // federationAdapter 将协议错误和身份记录转换为账户模块的契约。
@@ -68,6 +73,6 @@ func (a federationAdapter) Start(ctx context.Context, id, state, verifier string
 	return uri, version, mapProviderError(err)
 }
 func (a federationAdapter) Verify(ctx context.Context, id, version, code, verifier string) (account.VerifiedIdentity, error) {
-	v, err := a.registry.Verify(ctx, id, version, code, verifier)
-	return account.VerifiedIdentity{Namespace: v.Namespace, Subject: v.Subject, Name: v.Name, AuthenticatedAt: v.AuthenticatedAt}, mapProviderError(err)
+	verified, err := a.registry.Verify(ctx, id, version, code, verifier)
+	return account.VerifiedIdentity{Namespace: verified.Namespace, Subject: verified.Subject, Name: verified.Name}, mapProviderError(err)
 }

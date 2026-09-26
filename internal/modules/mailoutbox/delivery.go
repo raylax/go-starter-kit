@@ -3,7 +3,7 @@ package mailoutbox
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"time"
 
@@ -28,21 +28,21 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, databaseTimeout)
 	defer cancel()
 	if err := s.queries.ExpireMail(queryCtx, sqlc.ExpireMailParams{MaxAttempts: maxDeliveryAttempts, BatchSize: expiredMailBatchSize}); err != nil {
-		return false, err
+		return false, &stageError{stage: "expire", cause: err}
 	}
 	lease, err := uuid.NewRandom()
 	if err != nil {
-		return false, err
+		return false, &stageError{stage: "create_lease", cause: err}
 	}
 	row, err := s.queries.ClaimMail(queryCtx, sqlc.ClaimMailParams{LeaseID: &lease, MaxAttempts: maxDeliveryAttempts, LeaseSeconds: int64(leaseDuration / time.Second)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, &stageError{stage: "claim", cause: err}
 	}
 	if Status(row.Status) != StatusProcessing || row.LeaseID == nil || *row.LeaseID != lease || row.LeasedUntil == nil {
-		return true, fmt.Errorf("邮件领取状态无效")
+		return true, &stageError{stage: "validate_claim", messageID: row.ID, attempt: row.Attempts, cause: errors.New("邮件领取状态无效")}
 	}
 	sendErr := s.deliver(ctx, row)
 	return true, s.finishDelivery(ctx, row, lease, sendErr)
@@ -74,18 +74,21 @@ func (s *Service) finishDelivery(ctx context.Context, row sqlc.MailOutbox, lease
 	defer finish()
 	var count int64
 	var err error
+	stage := "complete"
 	if sendErr == nil {
 		count, err = s.queries.CompleteMail(finishCtx, sqlc.CompleteMailParams{ID: row.ID, LeaseID: &lease})
 	} else {
+		stage = "retry"
 		delay := retryDelaySeconds(row.Attempts)
 		count, err = s.queries.RetryMail(finishCtx, sqlc.RetryMailParams{ID: row.ID, LeaseID: &lease, DelaySeconds: delay, MaxAttempts: maxDeliveryAttempts})
-		s.logger.WarnContext(ctx, "邮件投递失败", "message_id", row.ID, "attempt", row.Attempts)
+		failure := &stageError{stage: "send", messageID: row.ID, attempt: row.Attempts, cause: sendErr}
+		s.logger.LogAttrs(ctx, slog.LevelWarn, "邮件投递失败", failure.attrs()...)
 	}
 	if err != nil {
-		return err
+		return &stageError{stage: stage, messageID: row.ID, attempt: row.Attempts, cause: err}
 	}
 	if count != 1 {
-		return fmt.Errorf("邮件领取租约已失效")
+		return &stageError{stage: "confirm_lease", messageID: row.ID, attempt: row.Attempts, cause: errors.New("邮件领取租约已失效")}
 	}
 	return nil
 }

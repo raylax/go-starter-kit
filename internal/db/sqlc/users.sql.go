@@ -244,6 +244,20 @@ func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) (User, error) {
 	return i, err
 }
 
+const releasePendingEmail = `-- name: ReleasePendingEmail :exec
+UPDATE users u SET email = NULL, email_normalized = NULL,
+ auth_version = auth_version + 1, updated_at = now()
+WHERE u.email_normalized = $1 AND u.status = 'pending'
+ AND u.email_verified_at IS NULL AND NOT u.recovery_enabled
+ AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.user_id = u.id)
+`
+
+// 邮箱持有者验证成功后可收回纯注册占位；版本递增同时废止原注册挑战。
+func (q *Queries) ReleasePendingEmail(ctx context.Context, emailNormalized *string) error {
+	_, err := q.db.Exec(ctx, releasePendingEmail, emailNormalized)
+	return err
+}
+
 const setUserStatus = `-- name: SetUserStatus :one
 UPDATE users SET status = $2, auth_version = auth_version + 1, updated_at = now()
 WHERE id = $1 RETURNING id, display_name, email, email_normalized, email_verified_at, recovery_enabled, status, role, auth_version, created_at, updated_at

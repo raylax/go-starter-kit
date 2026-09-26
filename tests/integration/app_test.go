@@ -34,11 +34,10 @@ func TestApplicationAndMigrations(t *testing.T) {
 	}
 	alice := httptest.NewServer(handler)
 	t.Cleanup(alice.Close)
-	request := testutil.Request(t)
-	request(alice, http.MethodGet, "/health/ready", "", false, http.StatusOK)
-	request(alice, http.MethodPost, "/v1/projects", `{"name":"保留的项目"}`, true, http.StatusCreated)
-	request(alice, http.MethodPost, "/v1/tasks", `{"title":"测试任务"}`, true, http.StatusCreated)
-	spec := request(alice, http.MethodGet, "/openapi.json", "", false, http.StatusOK)
+	testutil.Request(t, alice, http.MethodGet, "/health/ready", "", false, http.StatusOK)
+	testutil.Request(t, alice, http.MethodPost, "/v1/projects", `{"name":"保留的项目"}`, true, http.StatusCreated)
+	testutil.Request(t, alice, http.MethodPost, "/v1/tasks", `{"title":"测试任务"}`, true, http.StatusCreated)
+	spec := testutil.Request(t, alice, http.MethodGet, "/openapi.json", "", false, http.StatusOK)
 	var contract openAPIContract
 	if err := json.Unmarshal(spec, &contract); err != nil {
 		t.Fatal(err)
@@ -101,9 +100,9 @@ func TestApplicationAndMigrations(t *testing.T) {
 	}
 	assertTables(true)
 	createRecords("重建后的记录")
-	request(alice, http.MethodGet, "/v1/projects", "", true, http.StatusOK)
-	request(alice, http.MethodGet, "/v1/tasks", "", true, http.StatusOK)
+	testutil.Request(t, alice, http.MethodGet, "/v1/projects", "", true, http.StatusOK)
+	testutil.Request(t, alice, http.MethodGet, "/v1/tasks", "", true, http.StatusOK)
 	pool.Close()
-	request(alice, http.MethodGet, "/health/ready", "", false, http.StatusServiceUnavailable)
-	request(alice, http.MethodGet, "/health/live", "", false, http.StatusOK)
+	testutil.Request(t, alice, http.MethodGet, "/health/ready", "", false, http.StatusServiceUnavailable)
+	testutil.Request(t, alice, http.MethodGet, "/health/live", "", false, http.StatusOK)
 }

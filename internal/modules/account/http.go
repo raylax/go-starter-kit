@@ -92,7 +92,7 @@ func authenticationRoutes() []httpapi.Route[*Service] {
 			startOAuth,
 			flowOutput,
 		),
-		httpapi.MapEndpoint(
+		httpapi.Endpoint(
 			operation(httpapi.Public, huma.Operation{
 				OperationID: "oauth-callback",
 				Method:      http.MethodPost,
@@ -101,7 +101,6 @@ func authenticationRoutes() []httpapi.Route[*Service] {
 				Tags:        []string{"Authentication"},
 			}),
 			oauthCallback,
-			callbackOutput,
 		),
 		httpapi.NoContentEndpoint(
 			operation(httpapi.Public, huma.Operation{
@@ -158,7 +157,7 @@ func profileRoutes() []httpapi.Route[*Service] {
 // securityRoutes 重新认证、密码与联系邮箱变更。
 func securityRoutes() []httpapi.Route[*Service] {
 	return []httpapi.Route[*Service]{
-		httpapi.MapEndpoint(
+		httpapi.Endpoint(
 			operation(httpapi.Session, huma.Operation{
 				OperationID: "reauthenticate-user",
 				Method:      http.MethodPost,
@@ -167,7 +166,6 @@ func securityRoutes() []httpapi.Route[*Service] {
 				Tags:        []string{"Account Security"},
 			}),
 			reauthenticateUser,
-			reauthenticateOutput,
 		),
 		httpapi.NoContentEndpoint(
 			operation(httpapi.Session, huma.Operation{
@@ -279,8 +277,12 @@ func startOAuth(service *Service, ctx context.Context, input *OAuthStartInput) (
 	return service.StartLogin(ctx, request(ctx), input.Provider, input.Body.Purpose)
 }
 
-func oauthCallback(service *Service, ctx context.Context, input *CallbackInput) (AuthenticationResult, error) {
-	return service.Callback(ctx, request(ctx), input.Body.Token, input.Body.Code, input.Body.State)
+func oauthCallback(service *Service, ctx context.Context, input *CallbackInput) (*CallbackOutput, error) {
+	result, err := service.Callback(ctx, request(ctx), input.Body.Token, input.Body.Code, input.Body.State)
+	if err != nil {
+		return nil, err
+	}
+	return callbackOutput(result)
 }
 
 func forgotPassword(service *Service, ctx context.Context, input *ForgotInput) error {
@@ -302,14 +304,18 @@ func updateProfile(service *Service, ctx context.Context, input *UpdateInput) (U
 	return service.UpdateProfile(ctx, request(ctx), input.Body.DisplayName)
 }
 
-func reauthenticateUser(service *Service, ctx context.Context, input *ReauthenticateInput) (AuthenticationResult, error) {
-	return service.Reauthenticate(ctx, request(ctx), Reauthentication{
+func reauthenticateUser(service *Service, ctx context.Context, input *ReauthenticateInput) (*ReauthenticateOutput, error) {
+	result, err := service.Reauthenticate(ctx, request(ctx), Reauthentication{
 		Method:    input.Body.Method,
 		Password:  input.Body.Password,
 		AccountID: input.Body.AccountID,
 		Operation: input.Body.Operation,
 		Target:    input.Body.Target,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return reauthenticateOutput(result)
 }
 
 func setPassword(service *Service, ctx context.Context, input *PasswordInput) error {

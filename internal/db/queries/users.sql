@@ -34,6 +34,14 @@ RETURNING u.*;
 UPDATE users SET email = $2, email_normalized = $3, email_verified_at = now(), recovery_enabled = true,
  auth_version = auth_version + 1, updated_at = now() WHERE id = $1 AND status = 'active' RETURNING *;
 
+-- name: ReleasePendingEmail :exec
+-- 邮箱持有者验证成功后可收回纯注册占位；版本递增同时废止原注册挑战。
+UPDATE users u SET email = NULL, email_normalized = NULL,
+ auth_version = auth_version + 1, updated_at = now()
+WHERE u.email_normalized = $1 AND u.status = 'pending'
+ AND u.email_verified_at IS NULL AND NOT u.recovery_enabled
+ AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.user_id = u.id);
+
 -- name: BumpUserVersion :exec
 UPDATE users SET auth_version = auth_version + 1, updated_at = now() WHERE id = $1;
 

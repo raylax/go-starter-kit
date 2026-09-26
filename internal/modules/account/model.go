@@ -2,10 +2,11 @@
 package account
 
 import (
+	"time"
+
 	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/google/uuid"
-	"time"
 )
 
 var (
@@ -54,30 +55,51 @@ type Profile struct {
 	SessionID uuid.UUID
 }
 type SessionRecord struct {
-	ID                                                                       uuid.UUID
-	Method                                                                   AuthMethod
-	AuthenticatedAt, CreatedAt, LastSeenAt, IdleExpiresAt, AbsoluteExpiresAt time.Time
+	ID                uuid.UUID
+	Method            AuthMethod
+	AuthenticatedAt   time.Time
+	CreatedAt         time.Time
+	LastSeenAt        time.Time
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
 }
 type SessionCredentials struct {
-	Token                            string
-	ID                               uuid.UUID
-	IdleExpiresAt, AbsoluteExpiresAt time.Time
+	Token             string
+	ID                uuid.UUID
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
 }
 type FlowResult struct {
-	ID                      uuid.UUID
-	Token, AuthorizationURL string
-	ExpiresAt               time.Time
+	ID               uuid.UUID
+	Token            string
+	AuthorizationURL string
+	ExpiresAt        time.Time
 }
-type AuthenticationResult struct {
-	Result             AuthResult
-	Session            SessionCredentials
-	Flow               FlowResult
-	ReauthenticationID uuid.UUID
-	Provider, Name     string
+
+// CallbackResult 仅由 OAuth 回调产生，载荷通过对应结果的读取方法访问。
+// 零值不是成功结果，HTTP 映射会将其作为内部错误处理。
+type CallbackResult struct {
+	result             AuthResult
+	session            SessionCredentials
+	reauthenticationID uuid.UUID
+	link               LinkConfirmation
 }
+
+// LinkConfirmation 表示待用户确认的已验证第三方账号。
+type LinkConfirmation struct {
+	FlowID         uuid.UUID
+	Provider, Name string
+}
+
+// ReauthenticationResult 只表示跳转继续认证或已经取得操作证明。
+type ReauthenticationResult struct {
+	result             AuthResult
+	flow               FlowResult
+	reauthenticationID uuid.UUID
+}
+
 type VerifiedIdentity struct {
 	Namespace, Subject, Name string
-	AuthenticatedAt          time.Time
 }
 type Reauthentication struct {
 	Method           AuthMethod

@@ -63,7 +63,7 @@ func TestProofIssuanceDoesNotSerializeWithUserUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flow, err := f.s.StartLink(ctx, r, "demo", proof.ReauthenticationID)
+	flow, err := f.s.StartLink(ctx, r, "demo", proof.ReauthenticationID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,14 +72,14 @@ func TestProofIssuanceDoesNotSerializeWithUserUpdates(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := f.s.Callback(ctx, account.Request{ClientIP: r.ClientIP}, flow.Token, "proof-lock-social", u.Query().Get("state"))
-	if err != nil || result.Result != account.ResultLinkPending {
+	if err != nil || result.Result() != account.ResultLinkPending {
 		t.Fatalf("证明回调不应等待用户锁: %v", err)
 	}
 	emailProof, err := f.s.Reauthenticate(ctx, r, account.Reauthentication{Method: account.MethodPassword, Password: testPassword, Operation: account.OperationChangeEmail, Target: "proof-new@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = f.s.ChangeEmail(ctx, r, "proof-new@example.com", emailProof.ReauthenticationID); err != nil {
+	if err = f.s.ChangeEmail(ctx, r, "proof-new@example.com", emailProof.ReauthenticationID()); err != nil {
 		t.Fatalf("邮箱挑战签发不应等待用户锁: %v", err)
 	}
 	if err = tx.Rollback(t.Context()); err != nil {

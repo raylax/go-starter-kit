@@ -42,7 +42,13 @@ func (s *Service) UpdateProfile(ctx context.Context, r Request, name string) (Us
 			return e
 		}
 		result = userRecord(u)
-		return audit(ctx, q, r, "user.update", AuditSuccess, "user", u.ID.String(), u.ID.String(), "", nil)
+		return audit(ctx, q, r, auditEvent{
+			Action:       "user.update",
+			Outcome:      AuditSuccess,
+			ResourceType: "user",
+			ResourceID:   u.ID.String(),
+			ScopeSubject: u.ID.String(),
+		})
 	})
 	return result, e
 }

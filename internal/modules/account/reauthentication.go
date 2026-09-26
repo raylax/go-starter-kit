@@ -18,7 +18,7 @@ func (s *Service) validateOperation(operation Operation, target string) error {
 			return ErrInvalid
 		}
 	case OperationUnlinkAccount:
-		if _, e := uuid.Parse(target); e != nil {
+		if _, err := uuid.Parse(target); err != nil {
 			return ErrInvalid
 		}
 	case OperationSetPassword:
@@ -26,8 +26,8 @@ func (s *Service) validateOperation(operation Operation, target string) error {
 			return ErrInvalid
 		}
 	case OperationChangeEmail:
-		normalized, e := normalizeEmail(target)
-		if e != nil || normalized != target {
+		normalized, err := normalizeEmail(target)
+		if err != nil || normalized != target {
 			return ErrInvalid
 		}
 	default:
@@ -38,110 +38,130 @@ func (s *Service) validateOperation(operation Operation, target string) error {
 
 // authorization 校验原会话、精确用途、证明账号版本和一次性认领状态。
 func (s *Service) authorization(ctx context.Context, q *store, r Request, id uuid.UUID, operation Operation, target string, claim *uuid.UUID) (sqlc.AuthFlow, error) {
-	f, e := q.GetFlow(ctx, id)
-	if errors.Is(e, pgx.ErrNoRows) {
-		return f, ErrReauthentication
+	proof, err := q.GetFlow(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return proof, ErrReauthentication
 	}
-	if e != nil {
-		return f, e
+	if err != nil {
+		return proof, err
 	}
-	if FlowPurpose(f.Purpose) != FlowReauthenticate || f.UserID == nil || f.SessionID == nil || f.UserID.String() != r.UserID || f.SessionID.String() != r.SessionID || Operation(f.Operation) != operation || f.Target != target || f.AccountID == nil {
-		return f, ErrReauthentication
+	if FlowPurpose(proof.Purpose) != FlowReauthenticate || proof.UserID == nil || proof.SessionID == nil || proof.AccountID == nil {
+		return proof, ErrReauthentication
+	}
+	if proof.UserID.String() != r.UserID || proof.SessionID.String() != r.SessionID {
+		return proof, ErrReauthentication
+	}
+	if Operation(proof.Operation) != operation || proof.Target != target {
+		return proof, ErrReauthentication
 	}
 	if claim == nil {
-		if FlowStatus(f.Status) != FlowAuthorized {
-			return f, ErrReauthentication
+		if FlowStatus(proof.Status) != FlowAuthorized {
+			return proof, ErrReauthentication
 		}
-	} else if FlowStatus(f.Status) != FlowClaimed || f.ClaimedBy == nil || *f.ClaimedBy != *claim {
-		return f, ErrReauthentication
+	} else if FlowStatus(proof.Status) != FlowClaimed || proof.ClaimedBy == nil || *proof.ClaimedBy != *claim {
+		return proof, ErrReauthentication
 	}
-	u, e := q.GetUser(ctx, *f.UserID)
-	if e != nil {
-		return f, proofError(credentialLookupError(e), ErrReauthentication)
+	user, err := q.GetUser(ctx, *proof.UserID)
+	if err != nil {
+		return proof, proofError(credentialLookupError(err), ErrReauthentication)
 	}
-	if UserStatus(u.Status) != UserActive || u.AuthVersion != f.AuthVersion {
-		return f, ErrReauthentication
+	if UserStatus(user.Status) != UserActive || user.AuthVersion != proof.AuthVersion {
+		return proof, ErrReauthentication
 	}
-	a, e := q.GetAccount(ctx, sqlc.GetAccountParams{ID: *f.AccountID, UserID: u.ID})
-	if e != nil {
-		return f, proofError(credentialLookupError(e), ErrReauthentication)
+	account, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: *proof.AccountID, UserID: user.ID})
+	if err != nil {
+		return proof, proofError(credentialLookupError(err), ErrReauthentication)
 	}
-	if a.Version != f.AccountVersion || !s.accountEnabled(a) {
-		return f, ErrReauthentication
+	if account.Version != proof.AccountVersion || !s.accountEnabled(account) {
+		return proof, ErrReauthentication
 	}
-	if _, e = q.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *f.SessionID, UserID: u.ID}); e != nil {
-		return f, proofError(credentialLookupError(e), ErrReauthentication)
+	if _, err = q.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *proof.SessionID, UserID: user.ID}); err != nil {
+		return proof, proofError(credentialLookupError(err), ErrReauthentication)
 	}
-	return f, nil
+	return proof, nil
 }
-func finishAuthorization(ctx context.Context, q *store, f sqlc.AuthFlow) error {
-	return proofError(q.consumeFlow(ctx, f.ID, FlowStatus(f.Status)), ErrReauthentication)
+
+func finishAuthorization(ctx context.Context, q *store, proof sqlc.AuthFlow) error {
+	return proofError(q.consumeFlow(ctx, proof.ID, FlowStatus(proof.Status)), ErrReauthentication)
 }
-func (s *Service) Reauthenticate(ctx context.Context, r Request, input Reauthentication) (_ AuthenticationResult, failureErr error) {
+
+func (s *Service) Reauthenticate(ctx context.Context, r Request, input Reauthentication) (_ ReauthenticationResult, failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "auth.reauthenticate", &failureErr)
-	if e := s.validateOperation(input.Operation, input.Target); e != nil {
-		return AuthenticationResult{}, e
+	if err := s.validateOperation(input.Operation, input.Target); err != nil {
+		return ReauthenticationResult{}, err
 	}
-	if e := s.entryLimit(ctx, r, "reauth", r.UserID); e != nil {
-		return AuthenticationResult{}, e
+	if err := s.entryLimit(ctx, r, "reauth", r.UserID); err != nil {
+		return ReauthenticationResult{}, err
 	}
-	u, _, e := s.readSelf(ctx, s.queries, r)
-	if e != nil {
-		return AuthenticationResult{}, db.MapError(e, storageErrors)
+	user, _, err := s.readSelf(ctx, s.queries, r)
+	if err != nil {
+		return ReauthenticationResult{}, db.MapError(err, storageErrors)
 	}
-	var a sqlc.Account
+	var account sqlc.Account
 	if input.Method == MethodPassword {
-		a, e = s.queries.GetPasswordAccount(ctx, u.ID)
+		account, err = s.queries.GetPasswordAccount(ctx, user.ID)
 	} else if input.Method == MethodOAuth {
-		a, e = s.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: input.AccountID, UserID: u.ID})
+		account, err = s.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: input.AccountID, UserID: user.ID})
 	} else {
-		return AuthenticationResult{}, ErrInvalid
+		return ReauthenticationResult{}, ErrInvalid
 	}
-	if errors.Is(e, pgx.ErrNoRows) {
-		return AuthenticationResult{}, ErrReauthentication
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ReauthenticationResult{}, ErrReauthentication
 	}
-	if e != nil {
-		return AuthenticationResult{}, e
+	if err != nil {
+		return ReauthenticationResult{}, err
 	}
-	if input.Operation == OperationUnlinkAccount && a.ID.String() == input.Target {
-		return AuthenticationResult{}, ErrLastAccount
+	if input.Operation == OperationUnlinkAccount && account.ID.String() == input.Target {
+		return ReauthenticationResult{}, ErrLastAccount
 	}
 	if input.Method == MethodOAuth {
-		if a.ProviderID == CredentialProvider || !s.accountEnabled(a) {
-			return AuthenticationResult{}, ErrInvalid
+		if account.ProviderID == CredentialProvider || !s.accountEnabled(account) {
+			return ReauthenticationResult{}, ErrInvalid
 		}
-		result, e := s.startFlow(ctx, r, FlowReauthenticate, a.ProviderID, input.Operation, input.Target, &a, nil)
-		return AuthenticationResult{Result: ResultRedirect, Flow: result}, e
+		result, err := s.startReauthenticationFlow(ctx, r, account, input.Operation, input.Target)
+		return redirectReauthentication(result), err
 	}
-	valid, _, e := s.deps.Passwords.Verify(ctx, text(a.PasswordHash), input.Password)
-	if e != nil {
-		return AuthenticationResult{}, e
+	valid, _, err := s.deps.Passwords.Verify(ctx, text(account.PasswordHash), input.Password)
+	if err != nil {
+		return ReauthenticationResult{}, err
 	}
 	if !valid {
-		return AuthenticationResult{}, ErrReauthentication
+		return ReauthenticationResult{}, ErrReauthentication
 	}
-	var result AuthenticationResult
-	e = db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
+	var result ReauthenticationResult
+	err = db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		fresh, session, e := s.readSelf(ctx, q, r)
-		if e != nil {
-			return e
+		currentUser, session, err := s.readSelf(ctx, q, r)
+		if err != nil {
+			return err
 		}
-		current, e := q.GetAccount(ctx, sqlc.GetAccountParams{ID: a.ID, UserID: u.ID})
-		if e != nil {
-			return proofError(credentialLookupError(e), ErrReauthentication)
+		currentAccount, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: user.ID})
+		if err != nil {
+			return proofError(credentialLookupError(err), ErrReauthentication)
 		}
-		if current.Version != a.Version || fresh.AuthVersion != u.AuthVersion {
+		if currentAccount.Version != account.Version || currentUser.AuthVersion != user.AuthVersion {
 			return ErrReauthentication
 		}
 		now := time.Now()
 		id := uuid.New()
-		_, e = q.CreateFlow(ctx, sqlc.CreateFlowParams{ID: id, Purpose: string(FlowReauthenticate), UserID: &u.ID, SessionID: &session.ID, AuthVersion: u.AuthVersion, AccountID: &a.ID, AccountVersion: a.Version, Operation: string(input.Operation), Target: input.Target, Status: string(FlowAuthorized), AuthenticatedAt: &now})
-		if e != nil {
-			return e
+		_, err = q.CreateFlow(ctx, sqlc.CreateFlowParams{
+			ID:              id,
+			Purpose:         string(FlowReauthenticate),
+			UserID:          &user.ID,
+			SessionID:       &session.ID,
+			AuthVersion:     user.AuthVersion,
+			AccountID:       &account.ID,
+			AccountVersion:  account.Version,
+			Operation:       string(input.Operation),
+			Target:          input.Target,
+			Status:          string(FlowAuthorized),
+			AuthenticatedAt: &now,
+		})
+		if err != nil {
+			return err
 		}
-		result = AuthenticationResult{Result: ResultReauthenticated, ReauthenticationID: id}
+		result = completedReauthentication(id)
 		return nil
 	})
-	return result, e
+	return result, err
 }

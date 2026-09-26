@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"time"
+
+	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/google/uuid"
-	"time"
 )
 
 // 审计元数据独立于 HTTP DTO，固定字段使用领域类型。
@@ -22,12 +25,22 @@ type loginAuditMetadata struct {
 	Method AuthMethod `json:"method"`
 }
 
-func audit(ctx context.Context, q *store, r Request, action string, outcome AuditOutcome, kind, id, scope, reason string, metadata any) error {
-	data, e := json.Marshal(metadata)
-	if e != nil {
-		return e
+type auditEvent struct {
+	Action       string
+	Outcome      AuditOutcome
+	ResourceType string
+	ResourceID   string
+	ScopeSubject string
+	Reason       string
+	Metadata     any
+}
+
+func audit(ctx context.Context, q *store, r Request, event auditEvent) error {
+	data, err := json.Marshal(event.Metadata)
+	if err != nil {
+		return err
 	}
-	if metadata == nil {
+	if event.Metadata == nil {
 		data = []byte(`{}`)
 	}
 	actorType := ActorAnonymous
@@ -37,8 +50,8 @@ func audit(ctx context.Context, q *store, r Request, action string, outcome Audi
 		actor = ptr(r.UserID)
 	}
 	var session *uuid.UUID
-	if sid, e := uuid.Parse(r.SessionID); e == nil {
-		session = &sid
+	if sessionID, err := uuid.Parse(r.SessionID); err == nil {
+		session = &sessionID
 	}
 	optional := func(v string) *string {
 		if v == "" {
@@ -46,7 +59,19 @@ func audit(ctx context.Context, q *store, r Request, action string, outcome Audi
 		}
 		return &v
 	}
-	return q.AppendAudit(ctx, sqlc.AppendAuditParams{Action: action, Outcome: string(outcome), ActorType: string(actorType), ActorID: actor, ResourceType: kind, ResourceID: optional(id), ScopeSubject: optional(scope), SessionID: session, RequestID: optional(r.RequestID), ReasonCode: optional(reason), Metadata: data})
+	return q.AppendAudit(ctx, sqlc.AppendAuditParams{
+		Action:       event.Action,
+		Outcome:      string(event.Outcome),
+		ActorType:    string(actorType),
+		ActorID:      actor,
+		ResourceType: event.ResourceType,
+		ResourceID:   optional(event.ResourceID),
+		ScopeSubject: optional(event.ScopeSubject),
+		SessionID:    session,
+		RequestID:    optional(r.RequestID),
+		ReasonCode:   optional(event.Reason),
+		Metadata:     data,
+	})
 }
 
 // recordFailureOnReturn 供 defer 调用，退出时读取具名错误返回值。
@@ -69,7 +94,15 @@ func (s *Service) recordFailure(ctx context.Context, r Request, action string, e
 	}
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
-	if e := audit(auditCtx, s.queries, r, action, outcome, "user", "", r.UserID, reason, nil); e != nil {
-		s.deps.Logger.ErrorContext(ctx, "审计写入失败", "action", action, "request_id", r.RequestID)
+	if err := audit(auditCtx, s.queries, r, auditEvent{
+		Action:       action,
+		Outcome:      outcome,
+		ResourceType: "user",
+		ScopeSubject: r.UserID,
+		Reason:       reason,
+	}); err != nil {
+		attrs := []slog.Attr{slog.String("stage", "append_audit"), slog.String("action", action), slog.String("request_id", r.RequestID)}
+		attrs = append(attrs, apperror.DiagnosticAttrs(err)...)
+		s.deps.Logger.LogAttrs(ctx, slog.LevelError, "审计写入失败", attrs...)
 	}
 }

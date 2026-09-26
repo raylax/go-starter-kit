@@ -10,8 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const passwordChangedNotification = "您的账户密码已修改。如非本人操作，请立即联系管理员。"
-
 func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, newPassword string, reauthID uuid.UUID) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "account.password_change", &failureErr)
 	if !s.deps.Passwords.Validate(newPassword) {
@@ -95,9 +93,15 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 		if err := s.invalidate(ctx, q, user.ID); err != nil {
 			return err
 		}
-		if err := q.enqueueSecurityNotification(ctx, user, passwordChangedNotification); err != nil {
+		if err := enqueueSecurityNotification(ctx, q, user, passwordChangedNotification); err != nil {
 			return err
 		}
-		return audit(ctx, q, r, "account.password_change", AuditSuccess, "user", user.ID.String(), user.ID.String(), "", nil)
+		return audit(ctx, q, r, auditEvent{
+			Action:       "account.password_change",
+			Outcome:      AuditSuccess,
+			ResourceType: "user",
+			ResourceID:   user.ID.String(),
+			ScopeSubject: user.ID.String(),
+		})
 	})
 }

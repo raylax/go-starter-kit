@@ -188,3 +188,15 @@ func (f *accountFixture) callback(flow account.AuthFlowResponse, code string, wa
 	}
 	return decode[account.AuthCallbackResponse](f.t, data)
 }
+
+func (f *accountFixture) assertFlowAuthenticatedAt(id uuid.UUID, started, completed time.Time) {
+	f.t.Helper()
+	var authenticatedAt *time.Time
+	if err := f.pool.QueryRow(f.t.Context(), "SELECT authenticated_at FROM auth_flows WHERE id=$1", id).Scan(&authenticatedAt); err != nil {
+		f.t.Fatal(err)
+	}
+	// PostgreSQL 时间戳以微秒保存，起点同步截断，避免精度差异造成误报。
+	if authenticatedAt == nil || authenticatedAt.Before(started.Truncate(time.Microsecond)) || authenticatedAt.After(completed) {
+		f.t.Fatal("第三方证明完成时间未记录在本次回调期间")
+	}
+}

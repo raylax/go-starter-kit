@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"html"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/example/go-starter-kit/internal/db/sqlc"
@@ -15,14 +13,12 @@ import (
 )
 
 const (
-	maxAuditActionRunes     = 100
-	maxAuditMetadataBytes   = 8 << 10 // 8 KiB
-	maxMailKindBytes        = 64
-	maxMailSubjectBytes     = 998
-	maxMailBodyBytes        = 64 << 10 // 64 KiB
-	securityNotificationTTL = 24 * time.Hour
+	maxAuditActionRunes   = 100
+	maxAuditMetadataBytes = 8 << 10 // 8 KiB
+	maxMailKindBytes      = 64
+	maxMailSubjectBytes   = 998
+	maxMailBodyBytes      = 64 << 10 // 64 KiB
 
-	securityNotificationSubject = "Account security notification"
 )
 
 // store 在账户模块的写入入口维护字段和组合规则，SQL 仅负责持久化与并发约束。
@@ -75,6 +71,16 @@ func (q *store) UpdateUserEmail(ctx context.Context, p sqlc.UpdateUserEmailParam
 		return sqlc.User{}, ErrInvalid
 	}
 	return q.rawQueries.UpdateUserEmail(ctx, p)
+}
+
+// ReleasePendingEmail 只在邮箱证明消费事务中释放无登录方式的未验证占位。
+// SQL 条件与注册完成的用户更新串行，已激活或已验证的邮箱归属保持不变。
+func (q *store) ReleasePendingEmail(ctx context.Context, email string) error {
+	normalized, err := normalizeEmail(email)
+	if err != nil || normalized != email {
+		return ErrInvalid
+	}
+	return q.rawQueries.ReleasePendingEmail(ctx, &email)
 }
 
 func (q *store) UpdateUserProfile(ctx context.Context, p sqlc.UpdateUserProfileParams) (sqlc.User, error) {
@@ -197,12 +203,4 @@ func (q *store) EnqueueMail(ctx context.Context, p sqlc.EnqueueMailParams) error
 		return err
 	}
 	return q.rawQueries.EnqueueMail(ctx, p)
-}
-
-// enqueueSecurityNotification 在当前业务事务中写入已验证邮箱的安全通知。
-func (q *store) enqueueSecurityNotification(ctx context.Context, user sqlc.User, body string) error {
-	if user.Email == nil || user.EmailVerifiedAt == nil {
-		return nil
-	}
-	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{ID: uuid.New(), Kind: SecurityNotificationKind, Recipient: *user.Email, Subject: securityNotificationSubject, Body: "<p>" + html.EscapeString(body) + "</p>", ExpiresAt: time.Now().Add(securityNotificationTTL)})
 }

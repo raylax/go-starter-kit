@@ -1,6 +1,7 @@
 package account
 
 import (
+	"errors"
 	"reflect"
 	"time"
 
@@ -252,28 +253,51 @@ func userDTO(value UserRecord) User { return User(value) }
 
 func sessionRecordDTO(value SessionRecord) Session { return Session(value) }
 
-func callbackOutput(v AuthenticationResult) *CallbackOutput {
-	body := AuthCallbackResponse{Result: v.Result}
-	switch v.Result {
+var errInvalidAuthenticationResult = errors.New("认证结果状态无效")
+
+func callbackOutput(result CallbackResult) (*CallbackOutput, error) {
+	body := AuthCallbackResponse{Result: result.result}
+	switch result.result {
 	case ResultSession:
-		session := sessionDTO(v.Session)
+		if result.session.ID == uuid.Nil || result.session.Token == "" || result.session.IdleExpiresAt.IsZero() || result.session.AbsoluteExpiresAt.IsZero() {
+			return nil, errInvalidAuthenticationResult
+		}
+		session := sessionDTO(result.session)
 		body.Session = &session
 	case ResultReauthenticated:
-		body.ReauthenticationID = &v.ReauthenticationID
+		if result.reauthenticationID == uuid.Nil {
+			return nil, errInvalidAuthenticationResult
+		}
+		body.ReauthenticationID = &result.reauthenticationID
 	case ResultLinkPending:
-		body.FlowID = &v.Flow.ID
-		body.Provider = &v.Provider
-		body.Name = &v.Name
+		if result.link.FlowID == uuid.Nil || result.link.Provider == "" {
+			return nil, errInvalidAuthenticationResult
+		}
+		body.FlowID = &result.link.FlowID
+		body.Provider = &result.link.Provider
+		body.Name = &result.link.Name
+	default:
+		return nil, errInvalidAuthenticationResult
 	}
-	return &CallbackOutput{CacheControl: "no-store", Body: body}
+	return &CallbackOutput{CacheControl: "no-store", Body: body}, nil
 }
-func reauthenticateOutput(v AuthenticationResult) *ReauthenticateOutput {
-	body := UserReauthenticateResponse{Result: v.Result}
-	if v.Result == ResultRedirect {
-		f := flowDTO(v.Flow)
-		body.Flow = &f
-	} else {
-		body.ReauthenticationID = &v.ReauthenticationID
+
+func reauthenticateOutput(result ReauthenticationResult) (*ReauthenticateOutput, error) {
+	body := UserReauthenticateResponse{Result: result.result}
+	switch result.result {
+	case ResultRedirect:
+		if result.flow.ID == uuid.Nil || result.flow.Token == "" || result.flow.AuthorizationURL == "" || result.flow.ExpiresAt.IsZero() {
+			return nil, errInvalidAuthenticationResult
+		}
+		flow := flowDTO(result.flow)
+		body.Flow = &flow
+	case ResultReauthenticated:
+		if result.reauthenticationID == uuid.Nil {
+			return nil, errInvalidAuthenticationResult
+		}
+		body.ReauthenticationID = &result.reauthenticationID
+	default:
+		return nil, errInvalidAuthenticationResult
 	}
-	return &ReauthenticateOutput{CacheControl: "no-store", Body: body}
+	return &ReauthenticateOutput{CacheControl: "no-store", Body: body}, nil
 }

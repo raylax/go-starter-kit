@@ -46,7 +46,6 @@ type Config struct {
 }
 type Verified struct {
 	Namespace, Subject, Name string
-	AuthenticatedAt          time.Time
 }
 
 type githubUserResponse struct {

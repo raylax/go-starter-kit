@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -33,13 +34,20 @@ func Problem(w http.ResponseWriter, status int, detail string) {
 // InternalError 统一处理业务模块未映射的异常。
 func InternalError(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		logFailure(ctx, "handle_request", "operation failed", context.DeadlineExceeded)
 		return huma.Error504GatewayTimeout("request deadline exceeded")
 	}
-	Logger(ctx).ErrorContext(ctx, "operation failed", "error", err)
+	logFailure(ctx, "handle_request", "operation failed", err)
 	return huma.Error500InternalServerError("internal server error")
 }
 
-// FromError 只公开已分类业务错误；未知错误记录原因并返回通用提示。
+// logFailure 统一记录固定阶段和安全分类，禁止把错误原文写入请求日志。
+func logFailure(ctx context.Context, stage, message string, err error) {
+	attrs := append([]slog.Attr{slog.String("stage", stage)}, apperror.DiagnosticAttrs(err)...)
+	Logger(ctx).LogAttrs(ctx, slog.LevelError, message, attrs...)
+}
+
+// FromError 只公开已分类业务错误；未知错误记录安全分类并返回通用提示。
 func FromError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -64,7 +72,7 @@ func FromError(ctx context.Context, err error) error {
 			}
 			return response
 		case apperror.Unavailable:
-			Logger(ctx).ErrorContext(ctx, "dependency unavailable", "error", err)
+			logFailure(ctx, "handle_request", "dependency unavailable", err)
 			return huma.Error503ServiceUnavailable(business.Error())
 		}
 		return InternalError(ctx, err)

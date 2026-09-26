@@ -3,7 +3,6 @@ package account
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -15,7 +14,7 @@ import (
 type failingAuditDatabase struct{ sqlc.DBTX }
 
 func (failingAuditDatabase) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, errors.New("private-database-error")
+	return pgconn.CommandTag{}, &pgconn.PgError{Code: "42501", Message: "private-database-error"}
 }
 
 func TestAuditFailureUsesInjectedLoggerAndRequestID(t *testing.T) {
@@ -27,5 +26,8 @@ func TestAuditFailureUsesInjectedLoggerAndRequestID(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "private-database-error") {
 		t.Fatal("审计失败泄露底层信息")
+	}
+	if !strings.Contains(logs.String(), `"stage":"append_audit"`) || !strings.Contains(logs.String(), `"reason_code":"database_error"`) || !strings.Contains(logs.String(), `"sqlstate":"42501"`) {
+		t.Fatal("审计失败缺少安全的故障分类")
 	}
 }

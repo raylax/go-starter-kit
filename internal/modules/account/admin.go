@@ -50,7 +50,14 @@ func (s *Service) SetStatus(ctx context.Context, r Request, id uuid.UUID, status
 			return e
 		}
 		metadata := userStatusAuditMetadata{Status: status}
-		if e = audit(ctx, q, r, "user.status_change", AuditSuccess, "user", id.String(), id.String(), "", metadata); e != nil {
+		if e = audit(ctx, q, r, auditEvent{
+			Action:       "user.status_change",
+			Outcome:      AuditSuccess,
+			ResourceType: "user",
+			ResourceID:   id.String(),
+			ScopeSubject: id.String(),
+			Metadata:     metadata,
+		}); e != nil {
 			return e
 		}
 		result = userRecord(u)
@@ -71,6 +78,12 @@ func (s *Service) RevokeUserSessions(ctx context.Context, r Request, id uuid.UUI
 		if e := s.invalidate(ctx, q, id); e != nil {
 			return e
 		}
-		return audit(ctx, q, r, "session.revoke_all", AuditSuccess, "user", id.String(), id.String(), "", nil)
+		return audit(ctx, q, r, auditEvent{
+			Action:       "session.revoke_all",
+			Outcome:      AuditSuccess,
+			ResourceType: "user",
+			ResourceID:   id.String(),
+			ScopeSubject: id.String(),
+		})
 	})
 }

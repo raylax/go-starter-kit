@@ -10,56 +10,65 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const emailChangedNotification = "账户联系邮箱已修改。如果不是本人操作，请联系管理员。"
-
 func (s *Service) ChangeEmail(ctx context.Context, r Request, email string, reauthID uuid.UUID) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "user.email_change", &failureErr)
-	email, e := normalizeEmail(email)
-	if e != nil {
-		return e
+	email, err := normalizeEmail(email)
+	if err != nil {
+		return err
 	}
 	if s.options.FrontendURL == "" {
 		return ErrUnavailable
 	}
-	if e = s.entryLimit(ctx, r, "email", r.UserID); e != nil {
-		return e
+	if err = s.entryLimit(ctx, r, "email", r.UserID); err != nil {
+		return err
 	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		u, session, e := s.readSelf(ctx, q, r)
-		if e != nil {
-			return e
+		user, session, err := s.readSelf(ctx, q, r)
+		if err != nil {
+			return err
 		}
-		if _, e = s.authorization(ctx, q, r, reauthID, OperationChangeEmail, email, nil); e != nil {
-			return e
+		if _, err = s.authorization(ctx, q, r, reauthID, OperationChangeEmail, email, nil); err != nil {
+			return err
 		}
-		v, e := s.createChallenge(ctx, q, u, VerifyChangeEmail, email, emailChangeChallengeTTL, &session.ID, &reauthID)
-		if e != nil {
-			return e
+		verification, err := s.createChallenge(ctx, q, user, VerifyChangeEmail, email, emailChangeChallengeTTL, &session.ID, &reauthID)
+		if err != nil {
+			return err
 		}
-		return proofError(q.claimAuthorization(ctx, reauthID, v.ID), ErrReauthentication)
+		return proofError(q.claimAuthorization(ctx, reauthID, verification.ID), ErrReauthentication)
 	})
 }
-func (s *Service) completeEmailChange(ctx context.Context, q *store, u sqlc.User, v sqlc.AuthVerification) error {
-	if v.SessionID == nil || v.ReauthenticationID == nil {
+
+func (s *Service) completeEmailChange(ctx context.Context, q *store, user sqlc.User, verification sqlc.AuthVerification) error {
+	if verification.SessionID == nil || verification.ReauthenticationID == nil {
 		return ErrCredentials
 	}
-	req := Request{Subject: authorization.Subject{UserID: u.ID.String(), SessionID: v.SessionID.String()}}
-	if _, err := q.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *v.SessionID, UserID: u.ID}); err != nil {
+	req := Request{Subject: authorization.Subject{
+		UserID:    user.ID.String(),
+		SessionID: verification.SessionID.String(),
+	}}
+	if _, err := q.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *verification.SessionID, UserID: user.ID}); err != nil {
 		return credentialLookupError(err)
 	}
-	proof, err := s.authorization(ctx, q, req, *v.ReauthenticationID, OperationChangeEmail, v.Email, &v.ID)
+	proof, err := s.authorization(ctx, q, req, *verification.ReauthenticationID, OperationChangeEmail, verification.Email, &verification.ID)
 	if err != nil {
 		return err
 	}
 	if err = finishAuthorization(ctx, q, proof); err != nil {
 		return err
 	}
-	if _, err = q.UpdateUserEmail(ctx, sqlc.UpdateUserEmailParams{ID: u.ID, Email: &v.Email, EmailNormalized: &v.Email}); err != nil {
+	if err = q.ReleasePendingEmail(ctx, verification.Email); err != nil {
 		return err
 	}
-	if err = q.RevokeUserSessions(ctx, u.ID); err != nil {
+	if _, err = q.UpdateUserEmail(ctx, sqlc.UpdateUserEmailParams{
+		ID:              user.ID,
+		Email:           &verification.Email,
+		EmailNormalized: &verification.Email,
+	}); err != nil {
 		return err
 	}
-	return q.enqueueSecurityNotification(ctx, u, emailChangedNotification)
+	if err = q.RevokeUserSessions(ctx, user.ID); err != nil {
+		return err
+	}
+	return enqueueSecurityNotification(ctx, q, user, emailChangedNotification)
 }
