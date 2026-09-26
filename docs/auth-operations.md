@@ -2,7 +2,7 @@
 
 ## 初始化与运行
 
-空数据库先应用 `00001_init.sql` 完整基线，再启动 API 和 Worker。基线包含邮件队列及全部业务表。已应用旧版迁移的数据库不能直接复用这条新基线；需要另行迁移数据，或在允许丢弃数据的开发环境重建数据库。历史 `projects.owner_id`、`tasks.owner_id` 不自动改写；已有外部 subject 必须由可信用户映射迁移，不能按邮箱猜测归属。旧 JWT 和演示令牌不能用于当前认证。
+空数据库先运行 `make migrate-up` 应用完整基线，再启动 API 和 Worker。`00001_init.sql` 包含邮件队列及全部业务表，资源、引用和租约 ID 直接使用 TEXT。已应用旧版迁移的数据库不能直接复用这条新基线；需要另行迁移数据，或在允许丢弃数据的开发环境重建数据库。历史 `projects.owner_id`、`tasks.owner_id` 不自动改写；已有外部 subject 必须由可信用户映射迁移，不能按邮箱猜测归属。旧 JWT 和演示令牌不能用于当前认证。
 
 在 `.env` 设置生成邮件验证链接的前端地址。应用不检查请求 Origin、不处理 CORS 预检或响应头；前后端跨域时由网关配置，同源部署无需额外处理。第三方登录的客户端密钥文件见下文提供商配置。
 
@@ -52,7 +52,7 @@ GitHub OAuth 只能证明新授权流程中的账号控制权，不保证提供�
 
 ## 首位管理员
 
-先通过正常注册建立用户，确认目标 UUID 后，由受控运维数据库账号执行事务。应用没有公开的角色赋予接口。下列 `:user_id` 是核对后的用户 UUID，`:audit_id` 由调用代码生成新的 UUID v4；两者均为 SQL 客户端绑定参数：
+先通过正常注册建立用户，确认目标用户 ID 后，由受控运维数据库账号执行事务。应用没有公开的角色赋予接口。下列 `:user_id` 是核对后的用户字符串 ID，`:audit_id` 通过 `identity.NewID()` 生成新的字符串 ID；两者均为 SQL 客户端绑定参数：
 
 ```sql
 BEGIN;
@@ -61,7 +61,7 @@ UPDATE users SET role = 'admin', auth_version = auth_version + 1, updated_at = n
 WHERE id = :user_id AND status = 'active';
 UPDATE user_sessions SET revoked_at = now() WHERE user_id = :user_id AND revoked_at IS NULL;
 INSERT INTO audit_events(id, action, outcome, actor_type, actor_id, resource_type, resource_id, scope_subject)
-SELECT :audit_id, 'user.role_change', 'success', 'system', 'operator-bootstrap', 'user', id::text, id::text
+SELECT :audit_id, 'user.role_change', 'success', 'system', 'operator-bootstrap', 'user', id, id
 FROM users WHERE id = :user_id AND status = 'active' AND role = 'admin';
 COMMIT;
 ```

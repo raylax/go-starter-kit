@@ -9,7 +9,6 @@ import (
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
 	"github.com/example/go-starter-kit/internal/validation"
-	"github.com/google/uuid"
 )
 
 // 字符数上限与 dto.go 的 maxLength 标签保持一致。
@@ -32,13 +31,16 @@ func (s *Service) Create(ctx context.Context, owner, name, description string) (
 	if err != nil {
 		return Record{}, err
 	}
-	row, err := s.queries.CreateProject(ctx, sqlc.CreateProjectParams{ID: uuid.New(), OwnerID: owner, Name: name, Description: description})
+	row, err := s.queries.CreateProject(ctx, sqlc.CreateProjectParams{ID: identity.NewID(), OwnerID: owner, Name: name, Description: description})
 	return fromRow(row), db.MapError(err, storageErrors)
 }
 
-func (s *Service) Get(ctx context.Context, owner string, id uuid.UUID) (Record, error) {
+func (s *Service) Get(ctx context.Context, owner string, id string) (Record, error) {
 	if err := identity.RequireSubject(owner); err != nil {
 		return Record{}, err
+	}
+	if !validation.Identifier(id) {
+		return Record{}, ErrInvalid
 	}
 	row, err := s.queries.GetProject(ctx, sqlc.GetProjectParams{ID: id, OwnerID: owner})
 	return fromRow(row), db.MapError(err, storageErrors)
@@ -59,9 +61,12 @@ func (s *Service) List(ctx context.Context, owner string, params pagination.Para
 	return pagination.Build(rows, params, fromRow)
 }
 
-func (s *Service) Update(ctx context.Context, owner string, id uuid.UUID, name, description string) (Record, error) {
+func (s *Service) Update(ctx context.Context, owner string, id string, name, description string) (Record, error) {
 	if err := identity.RequireSubject(owner); err != nil {
 		return Record{}, err
+	}
+	if !validation.Identifier(id) {
+		return Record{}, ErrInvalid
 	}
 	name, err := validate(name, description)
 	if err != nil {
@@ -71,9 +76,12 @@ func (s *Service) Update(ctx context.Context, owner string, id uuid.UUID, name, 
 	return fromRow(row), db.MapError(err, storageErrors)
 }
 
-func (s *Service) Delete(ctx context.Context, owner string, id uuid.UUID) error {
+func (s *Service) Delete(ctx context.Context, owner string, id string) error {
 	if err := identity.RequireSubject(owner); err != nil {
 		return err
+	}
+	if !validation.Identifier(id) {
+		return ErrInvalid
 	}
 	count, err := s.queries.DeleteProject(ctx, sqlc.DeleteProjectParams{ID: id, OwnerID: owner})
 	if err != nil {

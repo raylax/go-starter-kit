@@ -6,11 +6,10 @@ import (
 	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Service) ChangeEmail(ctx context.Context, r Request, email string, reauthID uuid.UUID) (failureErr error) {
+func (s *Service) ChangeEmail(ctx context.Context, r Request, email string, reauthID string) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "user.email_change", &failureErr)
 	email, err := normalizeEmail(email)
 	if err != nil {
@@ -44,10 +43,10 @@ func (s *Service) completeEmailChange(ctx context.Context, q *store, user sqlc.U
 		return ErrCredentials
 	}
 	req := Request{Subject: authorization.Subject{
-		UserID:    user.ID.String(),
-		SessionID: verification.SessionID.String(),
+		UserID:    user.ID,
+		SessionID: *verification.SessionID,
 	}}
-	if _, err := q.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *verification.SessionID, UserID: user.ID}); err != nil {
+	if _, err := q.queries.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *verification.SessionID, UserID: user.ID}); err != nil {
 		return credentialLookupError(err)
 	}
 	proof, err := s.authorization(ctx, q, req, *verification.ReauthenticationID, OperationChangeEmail, verification.Email, &verification.ID)

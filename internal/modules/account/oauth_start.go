@@ -7,7 +7,6 @@ import (
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/example/go-starter-kit/internal/identity"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -33,7 +32,7 @@ func (s *Service) prepareOAuthFlow(ctx context.Context, provider string) (oauthF
 	protocol, _ := json.Marshal(protocolState{Verifier: verifier})
 	return oauthFlowStart{
 		params: sqlc.CreateFlowParams{
-			ID:            uuid.New(),
+			ID:            identity.NewID(),
 			TokenHash:     tokenHash,
 			ProviderID:    provider,
 			ConfigVersion: version,
@@ -79,14 +78,14 @@ func (s *Service) startLoginFlow(ctx context.Context, provider string, purpose F
 	return result, err
 }
 
-func (s *Service) StartLink(ctx context.Context, r Request, provider string, reauthID uuid.UUID) (FlowResult, error) {
+func (s *Service) StartLink(ctx context.Context, r Request, provider string, reauthID string) (FlowResult, error) {
 	if err := s.entryLimit(ctx, r, "link", r.UserID); err != nil {
 		return FlowResult{}, err
 	}
 	return s.startLinkFlow(ctx, r, provider, reauthID)
 }
 
-func (s *Service) startLinkFlow(ctx context.Context, r Request, provider string, reauthID uuid.UUID) (FlowResult, error) {
+func (s *Service) startLinkFlow(ctx context.Context, r Request, provider string, reauthID string) (FlowResult, error) {
 	start, err := s.prepareOAuthFlow(ctx, provider)
 	if err != nil {
 		return FlowResult{}, err
@@ -135,7 +134,7 @@ func (s *Service) startReauthenticationFlow(ctx context.Context, r Request, acco
 		if err != nil {
 			return err
 		}
-		current, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: user.ID})
+		current, err := q.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: user.ID})
 		if err != nil {
 			return credentialLookupError(err)
 		}

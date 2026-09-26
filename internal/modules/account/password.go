@@ -6,23 +6,26 @@ import (
 
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/validation"
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, newPassword string, reauthID uuid.UUID) (failureErr error) {
+func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, newPassword string, reauthID string) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "account.password_change", &failureErr)
+	if reauthID != "" && !validation.Identifier(reauthID) {
+		return ErrInvalid
+	}
 	if !s.deps.Passwords.Validate(newPassword) {
 		return ErrInvalid
 	}
 	if err := s.entryLimit(ctx, r, "password", r.UserID); err != nil {
 		return err
 	}
-	userBefore, _, err := s.readSelf(ctx, s.queries, r)
+	userBefore, _, err := s.readSelf(ctx, s.store, r)
 	if err != nil {
 		return db.MapError(err, storageErrors)
 	}
-	passwordAccount, accountErr := s.queries.GetPasswordAccount(ctx, userBefore.ID)
+	passwordAccount, accountErr := s.store.queries.GetPasswordAccount(ctx, userBefore.ID)
 	if accountErr != nil && !errors.Is(accountErr, pgx.ErrNoRows) {
 		return accountErr
 	}
@@ -35,7 +38,7 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 		if !matches {
 			return ErrReauthentication
 		}
-	} else if currentPassword != "" || reauthID == uuid.Nil {
+	} else if currentPassword != "" || reauthID == "" {
 		return ErrInvalid
 	}
 	passwordHash, err := s.deps.Passwords.Hash(ctx, newPassword)
@@ -51,7 +54,7 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 		if user.AuthVersion != userBefore.AuthVersion {
 			return ErrReauthentication
 		}
-		currentAccount, lookupErr := q.GetPasswordAccount(ctx, user.ID)
+		currentAccount, lookupErr := q.queries.GetPasswordAccount(ctx, user.ID)
 		if hasPassword {
 			if lookupErr != nil {
 				return proofError(credentialLookupError(lookupErr), ErrReauthentication)
@@ -76,14 +79,14 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 			if err != nil {
 				return err
 			}
-			accounts, err := q.ListAccounts(ctx, user.ID)
+			accounts, err := q.queries.ListAccounts(ctx, user.ID)
 			if err != nil {
 				return err
 			}
 			if len(accounts) >= maxLoginAccounts {
 				return ErrConflict
 			}
-			if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: user.ID, ProviderID: CredentialProvider, ProviderAccountID: user.ID.String(), ProviderNamespace: LocalNamespace, PasswordHash: &passwordHash}); err != nil {
+			if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{UserID: user.ID, ProviderID: CredentialProvider, ProviderAccountID: user.ID, ProviderNamespace: LocalNamespace, PasswordHash: &passwordHash}); err != nil {
 				return err
 			}
 			if err := finishAuthorization(ctx, q, proof); err != nil {
@@ -100,8 +103,8 @@ func (s *Service) SetPassword(ctx context.Context, r Request, currentPassword, n
 			Action:       "account.password_change",
 			Outcome:      AuditSuccess,
 			ResourceType: "user",
-			ResourceID:   user.ID.String(),
-			ScopeSubject: user.ID.String(),
+			ResourceID:   user.ID,
+			ScopeSubject: user.ID,
 		})
 	})
 }

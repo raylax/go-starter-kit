@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -30,10 +30,7 @@ func (s *Service) ProcessOne(ctx context.Context) (bool, error) {
 	if err := s.queries.ExpireMail(queryCtx, sqlc.ExpireMailParams{MaxAttempts: maxDeliveryAttempts, BatchSize: expiredMailBatchSize}); err != nil {
 		return false, &stageError{stage: "expire", cause: err}
 	}
-	lease, err := uuid.NewRandom()
-	if err != nil {
-		return false, &stageError{stage: "create_lease", cause: err}
-	}
+	lease := identity.NewID()
 	row, err := s.queries.ClaimMail(queryCtx, sqlc.ClaimMailParams{LeaseID: &lease, MaxAttempts: maxDeliveryAttempts, LeaseSeconds: int64(leaseDuration / time.Second)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -61,14 +58,14 @@ func (s *Service) deliver(ctx context.Context, row sqlc.MailOutbox) error {
 	sendCtx, stop := context.WithDeadline(ctx, deadline)
 	sendErr := sendCtx.Err()
 	if sendErr == nil {
-		sendErr = s.send(sendCtx, Message{ID: row.ID.String(), Kind: row.Kind, To: row.Recipient, Subject: row.Subject, HTML: row.Body})
+		sendErr = s.send(sendCtx, Message{ID: row.ID, Kind: row.Kind, To: row.Recipient, Subject: row.Subject, HTML: row.Body})
 	}
 	stop()
 	return sendErr
 }
 
 // finishDelivery 在停机取消后仍有机会落库；租约过期时由其他消费者恢复。
-func (s *Service) finishDelivery(ctx context.Context, row sqlc.MailOutbox, lease uuid.UUID, sendErr error) error {
+func (s *Service) finishDelivery(ctx context.Context, row sqlc.MailOutbox, lease string, sendErr error) error {
 	// 停机时仍尝试完成本次状态更新，失败则依靠租约过期恢复。
 	finishCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), databaseTimeout)
 	defer finish()

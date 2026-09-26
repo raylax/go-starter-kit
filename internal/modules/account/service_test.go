@@ -19,7 +19,7 @@ func (failingAuditDatabase) Exec(context.Context, string, ...any) (pgconn.Comman
 
 func TestAuditFailureUsesInjectedLoggerAndRequestID(t *testing.T) {
 	var logs bytes.Buffer
-	service := Service{queries: newStore(failingAuditDatabase{}), deps: Dependencies{Logger: slog.New(slog.NewJSONHandler(&logs, nil))}}
+	service := Service{store: newStore(failingAuditDatabase{}), deps: Dependencies{Logger: slog.New(slog.NewJSONHandler(&logs, nil))}}
 	service.recordFailure(t.Context(), Request{RequestID: "request-correlation"}, "auth.login", ErrCredentials)
 	if !strings.Contains(logs.String(), "request-correlation") || !strings.Contains(logs.String(), "auth.login") {
 		t.Fatal("审计失败缺少请求关联")

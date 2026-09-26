@@ -9,7 +9,7 @@ import (
 
 	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/validation"
 )
 
 // 审计元数据独立于 HTTP DTO，固定字段使用领域类型。
@@ -49,9 +49,9 @@ func audit(ctx context.Context, q *store, r Request, event auditEvent) error {
 		actorType = ActorUser
 		actor = ptr(r.UserID)
 	}
-	var session *uuid.UUID
-	if sessionID, err := uuid.Parse(r.SessionID); err == nil {
-		session = &sessionID
+	var session *string
+	if validation.Identifier(r.SessionID) {
+		session = &r.SessionID
 	}
 	optional := func(v string) *string {
 		if v == "" {
@@ -94,7 +94,7 @@ func (s *Service) recordFailure(ctx context.Context, r Request, action string, e
 	}
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
-	if err := audit(auditCtx, s.queries, r, auditEvent{
+	if err := audit(auditCtx, s.store, r, auditEvent{
 		Action:       action,
 		Outcome:      outcome,
 		ResourceType: "user",

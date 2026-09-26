@@ -1,7 +1,7 @@
 -- +goose Up
--- 当前完整基线，用于空数据库初始化；UUID 由应用代码生成。
+-- 当前完整基线，用于空数据库初始化；字符串 ID 由应用通过 identity.NewID() 生成。
 CREATE TABLE projects (
-    id UUID PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -13,7 +13,7 @@ CREATE TABLE projects (
 CREATE INDEX projects_owner_created_idx ON projects (owner_id, created_at DESC, id DESC);
 
 CREATE TABLE tasks (
-    id UUID PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -25,7 +25,7 @@ CREATE TABLE tasks (
 CREATE INDEX tasks_owner_created_idx ON tasks (owner_id, created_at DESC, id DESC);
 
 CREATE TABLE users (
-    id UUID PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL DEFAULT '',
     email TEXT,
     email_normalized TEXT,
@@ -40,8 +40,8 @@ CREATE TABLE users (
 );
 
 CREATE TABLE accounts (
-    id UUID PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider_id TEXT NOT NULL,
     provider_account_id TEXT NOT NULL,
     provider_namespace TEXT NOT NULL,
@@ -58,11 +58,11 @@ CREATE UNIQUE INDEX accounts_user_credential_key ON accounts(user_id) WHERE prov
 CREATE INDEX accounts_user_id_idx ON accounts(user_id);
 
 CREATE TABLE user_sessions (
-    id UUID PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token_hash BYTEA NOT NULL UNIQUE,
     auth_method TEXT NOT NULL,
-    auth_source_id UUID NOT NULL,
+    auth_source_id TEXT NOT NULL,
     authenticated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     auth_version BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -74,20 +74,20 @@ CREATE TABLE user_sessions (
 CREATE INDEX user_sessions_user_id_created_at_idx ON user_sessions(user_id, created_at DESC, id);
 
 CREATE TABLE auth_flows (
-    id UUID PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     purpose TEXT NOT NULL,
     token_hash BYTEA UNIQUE,
     provider_id TEXT NOT NULL DEFAULT '',
     config_version TEXT NOT NULL DEFAULT '',
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    session_id UUID REFERENCES user_sessions(id) ON DELETE CASCADE,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    session_id TEXT REFERENCES user_sessions(id) ON DELETE CASCADE,
     auth_version BIGINT NOT NULL DEFAULT 0,
-    account_id UUID,
+    account_id TEXT,
     account_version BIGINT NOT NULL DEFAULT 0,
     operation TEXT NOT NULL DEFAULT '',
     target TEXT NOT NULL DEFAULT '',
-    reauthentication_id UUID,
-    claimed_by UUID,
+    reauthentication_id TEXT,
+    claimed_by TEXT,
     state_hash BYTEA,
     protocol_state BYTEA,
     verified_namespace TEXT NOT NULL DEFAULT '',
@@ -102,14 +102,14 @@ CREATE INDEX auth_flows_expires_at_idx ON auth_flows(expires_at);
 CREATE INDEX auth_flows_user_id_idx ON auth_flows(user_id);
 
 CREATE TABLE auth_verifications (
-    id UUID PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     purpose TEXT NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
     email TEXT NOT NULL,
     auth_version BIGINT NOT NULL,
-    session_id UUID,
-    reauthentication_id UUID,
+    session_id TEXT,
+    reauthentication_id TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
     consumed_at TIMESTAMPTZ
@@ -117,7 +117,7 @@ CREATE TABLE auth_verifications (
 CREATE INDEX auth_verifications_expires_at_idx ON auth_verifications(expires_at);
 
 CREATE TABLE audit_events (
-    id UUID PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     action TEXT NOT NULL,
     outcome TEXT NOT NULL,
@@ -126,7 +126,7 @@ CREATE TABLE audit_events (
     resource_type TEXT NOT NULL,
     resource_id TEXT,
     scope_subject TEXT,
-    session_id UUID,
+    session_id TEXT,
     request_id TEXT,
     reason_code TEXT,
     schema_version INTEGER NOT NULL DEFAULT 1,
@@ -147,7 +147,7 @@ CREATE INDEX auth_rate_limits_expires_at_idx ON auth_rate_limits(expires_at);
 
 -- 事务内入队的邮件正文为 HTML，投递终态清除敏感载荷。
 CREATE TABLE mail_outbox (
-    id UUID PRIMARY KEY,
+    id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
     recipient TEXT NOT NULL,
     subject TEXT NOT NULL,
@@ -156,7 +156,7 @@ CREATE TABLE mail_outbox (
     attempts INTEGER NOT NULL DEFAULT 0,
     available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
-    lease_id UUID,
+    lease_id TEXT,
     leased_until TIMESTAMPTZ,
     last_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),

@@ -4,13 +4,6 @@ package integration_test
 
 import (
 	"encoding/json"
-	app "github.com/example/go-starter-kit/internal/app/api"
-	"github.com/example/go-starter-kit/internal/modules/account"
-	"github.com/example/go-starter-kit/internal/modules/project"
-	"github.com/example/go-starter-kit/internal/platform/password"
-	"github.com/example/go-starter-kit/tests/integration/testutil"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +11,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	app "github.com/example/go-starter-kit/internal/app/api"
+	"github.com/example/go-starter-kit/internal/identity"
+	"github.com/example/go-starter-kit/internal/modules/account"
+	"github.com/example/go-starter-kit/internal/modules/project"
+	"github.com/example/go-starter-kit/internal/platform/password"
+	"github.com/example/go-starter-kit/tests/integration/testutil"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func applicationServices(t *testing.T, pool *pgxpool.Pool) app.Dependencies {
@@ -40,7 +41,7 @@ func TestSessionProtectsBusinessResources(t *testing.T) {
 		t.Fatal(e)
 	}
 	for _, email := range []string{"owner@example.com", "other@example.com"} {
-		_, e = pool.Exec(t.Context(), `WITH u AS (INSERT INTO users(id,email,email_normalized,email_verified_at,status) VALUES($3,$1,$1,now(),'active') RETURNING id) INSERT INTO accounts(id,user_id,provider_id,provider_namespace,provider_account_id,password_hash) SELECT $4,id,'credential','local',id::text,$2 FROM u`, email, hash, uuid.New(), uuid.New())
+		_, e = pool.Exec(t.Context(), `WITH u AS (INSERT INTO users(id,email,email_normalized,email_verified_at,status) VALUES($3,$1,$1,now(),'active') RETURNING id) INSERT INTO accounts(id,user_id,provider_id,provider_namespace,provider_account_id,password_hash) SELECT $4,id,'credential','local',id::text,$2 FROM u`, email, hash, identity.NewID(), identity.NewID())
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -82,7 +83,7 @@ func TestSessionProtectsBusinessResources(t *testing.T) {
 	if e = json.Unmarshal(call(http.MethodPost, "/v1/projects", owner.Token, `{"name":"private"}`, http.StatusCreated), &createdProject); e != nil {
 		t.Fatal(e)
 	}
-	call(http.MethodGet, "/v1/projects/"+createdProject.ID.String(), other.Token, "", http.StatusNotFound)
-	call(http.MethodDelete, "/v1/me/sessions/"+owner.SessionID.String(), owner.Token, "", http.StatusNoContent)
-	call(http.MethodGet, "/v1/projects/"+createdProject.ID.String(), owner.Token, "", http.StatusUnauthorized)
+	call(http.MethodGet, "/v1/projects/"+createdProject.ID, other.Token, "", http.StatusNotFound)
+	call(http.MethodDelete, "/v1/me/sessions/"+owner.SessionID, owner.Token, "", http.StatusNoContent)
+	call(http.MethodGet, "/v1/projects/"+createdProject.ID, owner.Token, "", http.StatusUnauthorized)
 }

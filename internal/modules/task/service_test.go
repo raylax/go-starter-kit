@@ -5,9 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
-
 	"github.com/example/go-starter-kit/internal/apperror"
+	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
 )
 
@@ -15,10 +14,10 @@ func TestServiceRejectsMissingOwnerBeforeDatabaseAccess(t *testing.T) {
 	service := NewService(nil)
 	input := Details{Title: "task", Status: Todo}
 	_, createErr := service.Create(t.Context(), "", input)
-	_, getErr := service.Get(t.Context(), "", uuid.New())
+	_, getErr := service.Get(t.Context(), "", identity.NewID())
 	_, listErr := service.List(t.Context(), "", "", pagination.Params{Limit: 20})
-	_, updateErr := service.Update(t.Context(), "", uuid.New(), input)
-	deleteErr := service.Delete(t.Context(), "", uuid.New())
+	_, updateErr := service.Update(t.Context(), "", identity.NewID(), input)
+	deleteErr := service.Delete(t.Context(), "", identity.NewID())
 	for _, err := range []error{createErr, getErr, listErr, updateErr, deleteErr} {
 		if !errors.Is(err, apperror.ErrUnauthenticated) {
 			t.Fatalf("unexpected error: %v", err)
@@ -47,7 +46,7 @@ func TestTaskValidation(t *testing.T) {
 		}
 	}
 	service := NewService(nil)
-	if _, err := service.Update(t.Context(), "alice", uuid.New(), Details{Title: "title"}); !errors.Is(err, ErrInvalid) {
+	if _, err := service.Update(t.Context(), "alice", identity.NewID(), Details{Title: "title"}); !errors.Is(err, ErrInvalid) {
 		t.Fatal("update must require an explicit status")
 	}
 	for _, filter := range []struct {
@@ -58,6 +57,20 @@ func TestTaskValidation(t *testing.T) {
 	} {
 		if _, err := service.List(t.Context(), "alice", filter.status, pagination.Params{Limit: filter.limit, Offset: filter.offset}); !errors.Is(err, ErrInvalid) {
 			t.Fatal("invalid list filter accepted")
+		}
+	}
+}
+
+func TestResourceIdentifierValidationBeforeDatabaseAccess(t *testing.T) {
+	service := NewService(nil)
+	for _, id := range []string{"", " ", "bad\x00id", strings.Repeat("x", 256), strings.Repeat("中", 86)} {
+		_, getErr := service.Get(t.Context(), "alice", id)
+		_, updateErr := service.Update(t.Context(), "alice", id, Details{Title: "task", Status: Todo})
+		deleteErr := service.Delete(t.Context(), "alice", id)
+		for _, err := range []error{getErr, updateErr, deleteErr} {
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatal("无效标识没有在数据库访问之前被拒绝")
+			}
 		}
 	}
 }

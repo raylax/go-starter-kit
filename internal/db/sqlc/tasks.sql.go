@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 const createTask = `-- name: CreateTask :one
@@ -18,7 +16,7 @@ RETURNING id, owner_id, title, description, status, created_at, updated_at
 `
 
 type CreateTaskParams struct {
-	ID          uuid.UUID
+	ID          string
 	OwnerID     string
 	Title       string
 	Description string
@@ -51,7 +49,7 @@ DELETE FROM tasks WHERE id = $1 AND owner_id = $2
 `
 
 type DeleteTaskParams struct {
-	ID      uuid.UUID
+	ID      string
 	OwnerID string
 }
 
@@ -68,7 +66,7 @@ SELECT id, owner_id, title, description, status, created_at, updated_at FROM tas
 `
 
 type GetTaskParams struct {
-	ID      uuid.UUID
+	ID      string
 	OwnerID string
 }
 
@@ -142,7 +140,7 @@ RETURNING id, owner_id, title, description, status, created_at, updated_at
 `
 
 type UpdateTaskParams struct {
-	ID          uuid.UUID
+	ID          string
 	OwnerID     string
 	Title       string
 	Description string

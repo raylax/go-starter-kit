@@ -6,13 +6,11 @@ package sqlc
 
 import (
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type Account struct {
-	ID                uuid.UUID
-	UserID            uuid.UUID
+	ID                string
+	UserID            string
 	ProviderID        string
 	ProviderAccountID string
 	ProviderNamespace string
@@ -25,20 +23,20 @@ type Account struct {
 }
 
 type AuthFlow struct {
-	ID                 uuid.UUID
+	ID                 string
 	Purpose            string
 	TokenHash          []byte
 	ProviderID         string
 	ConfigVersion      string
-	UserID             *uuid.UUID
-	SessionID          *uuid.UUID
+	UserID             *string
+	SessionID          *string
 	AuthVersion        int64
-	AccountID          *uuid.UUID
+	AccountID          *string
 	AccountVersion     int64
 	Operation          string
 	Target             string
-	ReauthenticationID *uuid.UUID
-	ClaimedBy          *uuid.UUID
+	ReauthenticationID *string
+	ClaimedBy          *string
 	StateHash          []byte
 	ProtocolState      []byte
 	VerifiedNamespace  string
@@ -51,21 +49,21 @@ type AuthFlow struct {
 }
 
 type AuthVerification struct {
-	ID                 uuid.UUID
-	UserID             uuid.UUID
+	ID                 string
+	UserID             string
 	Purpose            string
 	TokenHash          []byte
 	Email              string
 	AuthVersion        int64
-	SessionID          *uuid.UUID
-	ReauthenticationID *uuid.UUID
+	SessionID          *string
+	ReauthenticationID *string
 	CreatedAt          time.Time
 	ExpiresAt          time.Time
 	ConsumedAt         *time.Time
 }
 
 type MailOutbox struct {
-	ID          uuid.UUID
+	ID          string
 	Kind        string
 	Recipient   string
 	Subject     string
@@ -74,7 +72,7 @@ type MailOutbox struct {
 	Attempts    int32
 	AvailableAt time.Time
 	ExpiresAt   time.Time
-	LeaseID     *uuid.UUID
+	LeaseID     *string
 	LeasedUntil *time.Time
 	LastError   *string
 	CreatedAt   time.Time
@@ -82,7 +80,7 @@ type MailOutbox struct {
 }
 
 type Project struct {
-	ID          uuid.UUID
+	ID          string
 	OwnerID     string
 	Name        string
 	Description string
@@ -91,7 +89,7 @@ type Project struct {
 }
 
 type Task struct {
-	ID          uuid.UUID
+	ID          string
 	OwnerID     string
 	Title       string
 	Description string
@@ -101,7 +99,7 @@ type Task struct {
 }
 
 type User struct {
-	ID              uuid.UUID
+	ID              string
 	DisplayName     string
 	Email           *string
 	EmailNormalized *string
@@ -115,11 +113,11 @@ type User struct {
 }
 
 type UserSession struct {
-	ID                uuid.UUID
-	UserID            uuid.UUID
+	ID                string
+	UserID            string
 	TokenHash         []byte
 	AuthMethod        string
-	AuthSourceID      uuid.UUID
+	AuthSourceID      string
 	AuthenticatedAt   time.Time
 	AuthVersion       int64
 	CreatedAt         time.Time

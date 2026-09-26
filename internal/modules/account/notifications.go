@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/identity"
 )
 
 const (
@@ -35,7 +35,7 @@ func (s *Service) enqueueVerificationMail(ctx context.Context, q *store, verific
 	link.RawQuery = ""
 	link.Fragment = url.Values{"token": {token}, "purpose": {verification.Purpose}}.Encode()
 	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{
-		ID:        uuid.New(),
+		ID:        identity.NewID(),
 		Kind:      verification.Purpose,
 		Recipient: verification.Email,
 		Subject:   verificationMailSubject,
@@ -50,7 +50,7 @@ func enqueueSecurityNotification(ctx context.Context, q *store, user sqlc.User, 
 		return nil
 	}
 	return q.EnqueueMail(ctx, sqlc.EnqueueMailParams{
-		ID:        uuid.New(),
+		ID:        identity.NewID(),
 		Kind:      SecurityNotificationKind,
 		Recipient: *user.Email,
 		Subject:   securityNotificationSubject,

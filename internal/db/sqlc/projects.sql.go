@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 const createProject = `-- name: CreateProject :one
@@ -18,7 +16,7 @@ RETURNING id, owner_id, name, description, created_at, updated_at
 `
 
 type CreateProjectParams struct {
-	ID          uuid.UUID
+	ID          string
 	OwnerID     string
 	Name        string
 	Description string
@@ -48,7 +46,7 @@ DELETE FROM projects WHERE id = $1 AND owner_id = $2
 `
 
 type DeleteProjectParams struct {
-	ID      uuid.UUID
+	ID      string
 	OwnerID string
 }
 
@@ -65,7 +63,7 @@ SELECT id, owner_id, name, description, created_at, updated_at FROM projects WHE
 `
 
 type GetProjectParams struct {
-	ID      uuid.UUID
+	ID      string
 	OwnerID string
 }
 
@@ -129,7 +127,7 @@ RETURNING id, owner_id, name, description, created_at, updated_at
 `
 
 type UpdateProjectParams struct {
-	ID          uuid.UUID
+	ID          string
 	OwnerID     string
 	Name        string
 	Description string

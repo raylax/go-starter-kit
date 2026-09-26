@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"errors"
+
 	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
@@ -11,11 +12,11 @@ import (
 )
 
 func (s *Service) Me(ctx context.Context, r Request) (Profile, error) {
-	u, session, err := s.readSelf(ctx, s.queries, r)
+	u, session, err := s.readSelf(ctx, s.store, r)
 	if err != nil {
 		return Profile{}, db.MapError(err, storageErrors)
 	}
-	accounts, err := s.queries.ListAccounts(ctx, u.ID)
+	accounts, err := s.store.queries.ListAccounts(ctx, u.ID)
 	if err != nil {
 		return Profile{}, db.MapError(err, storageErrors)
 	}
@@ -46,8 +47,8 @@ func (s *Service) UpdateProfile(ctx context.Context, r Request, name string) (Us
 			Action:       "user.update",
 			Outcome:      AuditSuccess,
 			ResourceType: "user",
-			ResourceID:   u.ID.String(),
-			ScopeSubject: u.ID.String(),
+			ResourceID:   u.ID,
+			ScopeSubject: u.ID,
 		})
 	})
 	return result, e

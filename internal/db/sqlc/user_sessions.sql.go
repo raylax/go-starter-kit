@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 const createSession = `-- name: CreateSession :one
@@ -17,11 +15,11 @@ VALUES ($1, $2, $3, $4, $5, $6, now() + $7::bigint * interval '1 second', now() 
 `
 
 type CreateSessionParams struct {
-	ID           uuid.UUID
-	UserID       uuid.UUID
+	ID           string
+	UserID       string
 	TokenHash    []byte
 	AuthMethod   string
-	AuthSourceID uuid.UUID
+	AuthSourceID string
 	AuthVersion  int64
 	IdleSeconds  int64
 	MaxSeconds   int64
@@ -89,8 +87,8 @@ WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL AND s.idle_expires_a
 `
 
 type GetValidSessionParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
+	ID     string
+	UserID string
 }
 
 func (q *Queries) GetValidSession(ctx context.Context, arg GetValidSessionParams) (UserSession, error) {
@@ -120,7 +118,7 @@ ORDER BY s.created_at DESC, s.id DESC LIMIT $2 OFFSET $3
 `
 
 type ListSessionsParams struct {
-	UserID uuid.UUID
+	UserID string
 	Limit  int32
 	Offset int32
 }
@@ -163,8 +161,8 @@ UPDATE user_sessions SET revoked_at = COALESCE(revoked_at, now()) WHERE id = $1 
 `
 
 type RevokeSessionParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
+	ID     string
+	UserID string
 }
 
 func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) (int64, error) {
@@ -179,7 +177,7 @@ const revokeUserSessions = `-- name: RevokeUserSessions :exec
 UPDATE user_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL
 `
 
-func (q *Queries) RevokeUserSessions(ctx context.Context, userID uuid.UUID) error {
+func (q *Queries) RevokeUserSessions(ctx context.Context, userID string) error {
 	_, err := q.db.Exec(ctx, revokeUserSessions, userID)
 	return err
 }
@@ -193,8 +191,8 @@ FROM users u WHERE s.id = $2 AND s.user_id = $3 AND u.id = s.user_id
 
 type TouchSessionParams struct {
 	IdleSeconds         int64
-	ID                  uuid.UUID
-	UserID              uuid.UUID
+	ID                  string
+	UserID              string
 	RenewalMilliseconds int64
 }
 

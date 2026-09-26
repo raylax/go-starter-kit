@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/example/go-starter-kit/internal/httpapi"
@@ -86,4 +87,4 @@ func deleteProject(service *Service, ctx context.Context, input *IDInput) error 
 	return service.Delete(ctx, identity.Subject(ctx), input.ID)
 }
 
-func projectLocation(item Project) string { return "/v1/projects/" + item.ID.String() }
+func projectLocation(item Project) string { return "/v1/projects/" + url.PathEscape(item.ID) }

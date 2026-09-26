@@ -86,7 +86,7 @@ func TestDependencyBoundaries(t *testing.T) {
 			case "httpapi":
 				allowed = dependency == "identity" || dependency == "authorization" || dependency == "apperror" || dependency == "pagination"
 			case "identity":
-				allowed = dependency == "apperror"
+				allowed = dependency == "apperror" || dependency == "validation"
 			case "apperror", "pagination", "validation", "authorization":
 				allowed = false
 			case "db":
@@ -128,6 +128,23 @@ func accountStoreViolations(name string, file *ast.File) []string {
 		return nil
 	}
 	var violations []string
+	// 仅允许通过 store.queries 选择只读方法，不允许取出底层对象绕过写入入口。
+	readMethods := map[string]bool{
+		"FindFlow": true, "FindProviderAccount": true, "FindSession": true,
+		"FindUserByEmail": true, "FindVerification": true, "GetAccount": true,
+		"GetPasswordAccount": true, "GetUser": true, "GetValidSession": true,
+		"ListAccounts": true, "ListSessions": true, "ListUsers": true,
+		"GetFlow": true, "LockUser": true, "GetSessionUser": true,
+	}
+	readAccesses := map[*ast.SelectorExpr]bool{}
+	ast.Inspect(file, func(node ast.Node) bool {
+		if sel, ok := node.(*ast.SelectorExpr); ok && readMethods[sel.Sel.Name] {
+			if receiver, ok := sel.X.(*ast.SelectorExpr); ok && receiver.Sel.Name == "queries" {
+				readAccesses[receiver] = true
+			}
+		}
+		return true
+	})
 	aliases := map[string]bool{}
 	for _, spec := range file.Imports {
 		path, _ := strconv.Unquote(spec.Path.Value)
@@ -147,11 +164,11 @@ func accountStoreViolations(name string, file *ast.File) []string {
 		if !ok {
 			return true
 		}
-		if sel.Sel.Name == "rawQueries" {
-			violations = append(violations, "生成查询只能在 store 中访问")
+		if sel.Sel.Name == "queries" && !readAccesses[sel] {
+			violations = append(violations, "底层查询只允许直接读取，写入和对象访问必须留在 store 中")
 		}
 		if id, ok := sel.X.(*ast.Ident); ok && aliases[id.Name] && (sel.Sel.Name == "New" || sel.Sel.Name == "Queries") {
-			violations = append(violations, "账户业务必须通过 store 构造和访问查询")
+			violations = append(violations, "账户业务必须通过 store 构造查询，禁止另建生成查询或嵌入其类型")
 		}
 		return true
 	})

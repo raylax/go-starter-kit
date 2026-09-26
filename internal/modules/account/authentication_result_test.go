@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/identity"
 )
 
 func TestCallbackOutputPreservesVariantContract(t *testing.T) {
-	id := uuid.New()
+	id := identity.NewID()
 	expiresAt := time.Now().Add(time.Hour)
 	cases := []struct {
 		name   string
@@ -44,7 +44,7 @@ func TestCallbackOutputPreservesVariantContract(t *testing.T) {
 }
 
 func TestReauthenticateOutputPreservesVariantContract(t *testing.T) {
-	id := uuid.New()
+	id := identity.NewID()
 	cases := []struct {
 		name   string
 		result ReauthenticationResult
@@ -79,7 +79,7 @@ func TestAuthenticationOutputRejectsInvalidState(t *testing.T) {
 		"回调未知结果":  {result: AuthResult("future")},
 		"回调不支持跳转": {result: ResultRedirect},
 		"回调缺少会话":  sessionCallback(SessionCredentials{}),
-		"回调缺少证明":  reauthenticatedCallback(uuid.Nil),
+		"回调缺少证明":  reauthenticatedCallback(""),
 		"回调缺少绑定":  linkPendingCallback(LinkConfirmation{}),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -94,7 +94,7 @@ func TestAuthenticationOutputRejectsInvalidState(t *testing.T) {
 		"重新认证未知结果":  {result: AuthResult("future")},
 		"重新认证不支持会话": {result: ResultSession},
 		"重新认证缺少跳转":  redirectReauthentication(FlowResult{}),
-		"重新认证缺少证明":  completedReauthentication(uuid.Nil),
+		"重新认证缺少证明":  completedReauthentication(""),
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, err := reauthenticateOutput(result)

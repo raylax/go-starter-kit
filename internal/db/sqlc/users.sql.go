@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 const activateUser = `-- name: ActivateUser :one
@@ -16,7 +14,7 @@ UPDATE users SET status = 'active', email_verified_at = now(), recovery_enabled 
 WHERE id = $1 AND status = 'pending' RETURNING id, display_name, email, email_normalized, email_verified_at, recovery_enabled, status, role, auth_version, created_at, updated_at
 `
 
-func (q *Queries) ActivateUser(ctx context.Context, id uuid.UUID) (User, error) {
+func (q *Queries) ActivateUser(ctx context.Context, id string) (User, error) {
 	row := q.db.QueryRow(ctx, activateUser, id)
 	var i User
 	err := row.Scan(
@@ -39,7 +37,7 @@ const bumpUserVersion = `-- name: BumpUserVersion :exec
 UPDATE users SET auth_version = auth_version + 1, updated_at = now() WHERE id = $1
 `
 
-func (q *Queries) BumpUserVersion(ctx context.Context, id uuid.UUID) error {
+func (q *Queries) BumpUserVersion(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, bumpUserVersion, id)
 	return err
 }
@@ -49,7 +47,7 @@ INSERT INTO users(id, display_name, status) VALUES ($1, $2, 'active') RETURNING 
 `
 
 type CreateFederatedUserParams struct {
-	ID          uuid.UUID
+	ID          string
 	DisplayName string
 }
 
@@ -79,7 +77,7 @@ RETURNING id, display_name, email, email_normalized, email_verified_at, recovery
 `
 
 type CreatePendingUserParams struct {
-	ID              uuid.UUID
+	ID              string
 	Email           *string
 	EmailNormalized *string
 }
@@ -134,8 +132,8 @@ WHERE u.id = $1 AND s.id = $2
 `
 
 type GetSessionUserParams struct {
-	UserID    uuid.UUID
-	SessionID uuid.UUID
+	UserID    string
+	SessionID string
 }
 
 func (q *Queries) GetSessionUser(ctx context.Context, arg GetSessionUserParams) (User, error) {
@@ -161,7 +159,7 @@ const getUser = `-- name: GetUser :one
 SELECT id, display_name, email, email_normalized, email_verified_at, recovery_enabled, status, role, auth_version, created_at, updated_at FROM users WHERE id = $1
 `
 
-func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
+func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 	row := q.db.QueryRow(ctx, getUser, id)
 	var i User
 	err := row.Scan(
@@ -225,7 +223,7 @@ const lockUser = `-- name: LockUser :one
 SELECT id, display_name, email, email_normalized, email_verified_at, recovery_enabled, status, role, auth_version, created_at, updated_at FROM users WHERE id = $1 FOR UPDATE
 `
 
-func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) (User, error) {
+func (q *Queries) LockUser(ctx context.Context, id string) (User, error) {
 	row := q.db.QueryRow(ctx, lockUser, id)
 	var i User
 	err := row.Scan(
@@ -264,7 +262,7 @@ WHERE id = $1 RETURNING id, display_name, email, email_normalized, email_verifie
 `
 
 type SetUserStatusParams struct {
-	ID     uuid.UUID
+	ID     string
 	Status string
 }
 
@@ -293,7 +291,7 @@ UPDATE users SET email = $2, email_normalized = $3, email_verified_at = now(), r
 `
 
 type UpdateUserEmailParams struct {
-	ID              uuid.UUID
+	ID              string
 	Email           *string
 	EmailNormalized *string
 }
@@ -331,8 +329,8 @@ RETURNING u.id, u.display_name, u.email, u.email_normalized, u.email_verified_at
 
 type UpdateUserProfileParams struct {
 	DisplayName string
-	ID          uuid.UUID
-	SessionID   uuid.UUID
+	ID          string
+	SessionID   string
 }
 
 func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {

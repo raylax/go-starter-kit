@@ -8,8 +8,6 @@ package sqlc
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const claimMail = `-- name: ClaimMail :one
@@ -27,7 +25,7 @@ RETURNING id, kind, recipient, subject, body, status, attempts, available_at, ex
 `
 
 type ClaimMailParams struct {
-	LeaseID      *uuid.UUID
+	LeaseID      *string
 	LeaseSeconds int64
 	MaxAttempts  int32
 }
@@ -61,8 +59,8 @@ WHERE id = $1 AND lease_id = $2 AND status = 'processing' AND leased_until > now
 `
 
 type CompleteMailParams struct {
-	ID      uuid.UUID
-	LeaseID *uuid.UUID
+	ID      string
+	LeaseID *string
 }
 
 func (q *Queries) CompleteMail(ctx context.Context, arg CompleteMailParams) (int64, error) {
@@ -79,7 +77,7 @@ VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type EnqueueMailParams struct {
-	ID        uuid.UUID
+	ID        string
 	Kind      string
 	Recipient string
 	Subject   string
@@ -133,8 +131,8 @@ WHERE id = $1 AND lease_id = $2 AND status = 'processing' AND leased_until > now
 `
 
 type RetryMailParams struct {
-	ID           uuid.UUID
-	LeaseID      *uuid.UUID
+	ID           string
+	LeaseID      *string
 	MaxAttempts  int32
 	DelaySeconds int64
 }

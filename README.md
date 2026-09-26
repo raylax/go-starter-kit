@@ -120,9 +120,9 @@ API 入口支持 `go run ./cmd/api`、`go run ./cmd/api migrate up`、`go run ./
 
 列表按 `created_at DESC, id DESC` 排序，默认 `limit=20`，最大 100；`offset` 最大 10000，返回 `items`、`has_more`、`limit`、`offset`，空列表始终是 `[]`。这是简单偏移分页，在并发插入/删除期间不保证跨页快照一致；需要大数据量稳定翻页时应改为游标分页。
 
-错误使用 `application/problem+json`（`status`、`title`、`detail`，校验错误不回显原始字段值、路径或解析消息，避免泄露凭据），保留真实 HTTP 状态码。每个响应携带服务端生成的 UUID v4 `X-Request-ID`。数据库内部错误记录到日志，对客户端返回通用错误。未知字段/查询参数拒绝，请求体上限 1 MiB。405 同时返回 `Allow`，列出该路径实际注册的方法。业务模块通过 `apperror` 声明业务错误，由 `httpapi.Endpoint` 统一调用 `httpapi.FromError`；`httpapi.ProtectedOperations` 集中维护认证声明、请求限制和基础错误契约。未知异常只向客户端返回通用提示，底层原因通过错误链保留用于排查。
+错误使用 `application/problem+json`（`status`、`title`、`detail`，校验错误不回显原始字段值、路径或解析消息，避免泄露凭据），保留真实 HTTP 状态码。每个响应携带服务端通过 `identity.NewID()` 生成的 `X-Request-ID`。数据库内部错误记录到日志，对客户端返回通用错误。未知字段/查询参数拒绝，请求体上限 1 MiB。405 同时返回 `Allow`，列出该路径实际注册的方法。业务模块通过 `apperror` 声明业务错误，由 `httpapi.Endpoint` 统一调用 `httpapi.FromError`；`httpapi.ProtectedOperations` 集中维护认证声明、请求限制和基础错误契约。未知异常只向客户端返回通用提示，底层原因通过错误链保留用于排查。
 
-所有新记录的 UUID 由 Go 代码生成并显式传入 SQL，默认使用 UUID v4（`uuid.New()`）。`00001_init.sql` 的 UUID 主键不设置生成默认值，不依赖 PostgreSQL 的 UUID 生成功能或特定版本。生成策略保留在各资源的创建代码中，后续可按表独立切换 v7，数据库列和 DTO 仍使用 UUID 类型。开发和测试镜像当前选用 PostgreSQL 18，仅作为运行基线。
+资源 ID 在 Go 和 DTO 中使用字符串，数据库使用 `TEXT`；可空引用使用 `*string`。新 ID 统一通过 `identity.NewID()` 生成，当前默认 UUID v4 字符串，后续生成策略可集中替换。接口将 ID 视为不透明值，允许非 UUID 标识，限制为非空白、有效 UTF-8、无 NUL、最多 255 字节。`00001_init.sql` 直接创建 TEXT 标识列，不设置数据库生成默认值。开发和测试镜像当前选用 PostgreSQL 18，仅作为运行基线。
 
 OpenAPI schema 统一使用资源名和用途：`Project` / `Task`、`ProjectCreateRequest` / `TaskCreateRequest`、`ProjectUpdateRequest` / `TaskUpdateRequest`、`ProjectListResponse` / `TaskListResponse`。公共类型为 `HealthResponse`、`ErrorResponse`、`ErrorDetail`。修改 DTO 后运行 `make generate`，使用 OpenAPI 生成 SDK 时需同步重新生成客户端。
 
@@ -200,7 +200,7 @@ API 通过 `FRONTEND_URL` 生成邮件验证链接。邮件当前由日志 mock 
 
 启动阶段收到 SIGINT/SIGTERM 会取消正在进行的依赖初始化，包括数据库连接。启动完成后，收到停止信号会停止接收新连接并排空请求，期间保持正在进行的认证和数据库调用可用；超过预算则取消请求上下文并关闭连接。HTTP 有请求头/请求体读取、写入和空闲连接期限。业务超时通过 context 协作取消；新增外部调用也必须传递 context。跨域部署由网关处理预检及 CORS 响应头，同源部署无需额外处理。数据库维护跨副本的认证限速计数；IP 直接使用连接对端地址，不信任客户端转发头。代理部署应配合网关限流，当前同一代理后的请求共享该 IP 桶。TLS 终止按网关部署设置。
 
-生产迁移作为独立发布步骤执行：`api migrate up`，API 启动不自动迁移。生产推荐单个迁移任务和独立 DDL 账号；API 使用最小 DML 权限账号。当前只有一条初始化迁移，`migrate down` 会删除全部业务表及数据，勿用于常规生产发布。
+生产迁移作为独立发布步骤执行：`api migrate up`，API 启动不自动迁移。生产推荐单个迁移任务和独立 DDL 账号；API 使用最小 DML 权限账号。当前只有一条初始化迁移，`migrate down` 会删除全部业务表及数据，勿用于常规生产发布。重置后的基线仅适用于空数据库，已应用旧版基线的数据库需单独迁移或重建。
 
 ## 遥测
 
@@ -212,7 +212,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 
 使用标准 OTLP HTTP `/v1/traces` 和 `/v1/metrics`，可通过 OpenTelemetry Collector 接入现有后端。支持 SDK 的标准 `OTEL_EXPORTER_OTLP_*` 环境变量，包括 endpoint、headers 和 TLS 配置。根 trace 默认采样 10%，继承父 trace 采样决定；指标独立于 trace 采样。日志始终写 JSON 到 stdout，由部署平台收集；没有重复配置 OTLP 日志导出。
 
-默认采集 HTTP 服务端追踪和指标，span 与指标使用路由模板，避免项目 UUID 造成高基数。SQL 和业务自定义 span 按业务需要追加；目前不采集 SQL 文本和请求/响应正文。
+默认采集 HTTP 服务端追踪和指标，span 与指标使用路由模板，避免具体资源 ID 造成高基数。SQL 和业务自定义 span 按业务需要追加；目前不采集 SQL 文本和请求/响应正文。
 
 ## 开发与验证
 

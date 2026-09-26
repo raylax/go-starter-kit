@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	app "github.com/example/go-starter-kit/internal/app/api"
 	"github.com/example/go-starter-kit/internal/db"
+	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/tests/integration/testutil"
 )
 
@@ -54,8 +53,8 @@ func TestApplicationAndMigrations(t *testing.T) {
 	createRecords := func(label string) {
 		t.Helper()
 		for _, resource := range []struct{ table, field string }{{"projects", "name"}, {"tasks", "title"}} {
-			id := uuid.New()
-			var storedID uuid.UUID
+			id := identity.NewID()
+			var storedID string
 			query := fmt.Sprintf("INSERT INTO %s (id, owner_id, %s) VALUES ($1, 'alice', $2) RETURNING id", resource.table, resource.field)
 			if err := pool.QueryRow(ctx, query, id, label).Scan(&storedID); err != nil {
 				t.Fatal(err)
@@ -89,11 +88,12 @@ func TestApplicationAndMigrations(t *testing.T) {
 	}
 	var version int64
 	if err := pool.QueryRow(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 1 {
-		t.Fatalf("基线版本错误: %d %v", version, err)
+		t.Fatalf("迁移版本错误: %d %v", version, err)
 	}
 	if err := db.Migrate(ctx, databaseURL, "down"); err != nil {
 		t.Fatal(err)
 	}
+	pool.Reset()
 	assertTables(false)
 	if err := db.Migrate(ctx, databaseURL, "up"); err != nil {
 		t.Fatal(err)

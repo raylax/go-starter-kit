@@ -44,7 +44,7 @@
 
 数据库行不直接成为接口返回值，业务模型也不承担接口校验标签。项目 DTO 仍名为 `Project`，任务 DTO 仍名为 `Task`，使用资源名作为 OpenAPI schema 名称。
 
-文件按完整职责聚合：项目与任务的校验、数据库行转换和存储错误策略随 `service.go` 维护；邮件状态定义归入 `model.go`，发送、结果落库与重试退避归入 `delivery.go`，轮询调度保留在 `runner.go`。账户模块按业务用例拆分，`oauth_start.go` 分别编排登录、绑定与重新认证的启动，共享协议材料准备和流程写入；`federation.go` 负责回调及完成逻辑。文件大小本身不作为拆分依据。
+文件按完整职责聚合：项目与任务的校验、数据库行转换和存储错误策略随 `service.go` 维护；邮件状态定义归入 `model.go`，发送、结果落库与重试退避归入 `delivery.go`，轮询调度保留在 `runner.go`。账户模块按业务用例拆分，`oauth_start.go` 分别编排登录、绑定与重新认证的启动，共享协议材料准备和流程写入；`federation.go` 负责回调及完成逻辑。文件大小本身不作为拆分依据。账户 store 只封装受控写入和状态转换，读取直接使用其具名 `queries` 字段中的 sqlc 方法；架构测试限制读取方法集合并禁止底层查询对象逸出，事务内读写共用同一个查询实例。
 
 账户回调与重新认证分别返回 `CallbackResult` 和 `ReauthenticationResult`，结果状态和载荷由模块内部构造，调用方通过读取方法访问。HTTP 转换显式检查各入口支持的结果及必需载荷，未知或不完整结果进入统一内部错误处理。审计使用具名 `auditEvent`，在调用点区分操作、资源 ID 和归属主体；通知内容由 `notifications.go` 构造，通过事务内 store 入队。
 
@@ -59,6 +59,8 @@
 租约、重试、有效期与终态载荷清理见 [邮件队列](mail-outbox.md)。接入 SendGrid 等服务时实现相同 Sender 并在 Worker 装配；发送器接受请求与实际送达分别处理。
 
 ## 数据库管理
+
+资源及引用 ID 在 Go 中统一为字符串，数据库统一为 `TEXT`，可空引用使用 `*string`。`identity.NewID()` 是资源、租约和请求标识的公共生成入口，当前默认 UUID v4 字符串。业务输入复用 `validation.Identifier`，按最多 255 字节检查非空白、有效 UTF-8 和无 NUL，不做 UUID 解析或大小写转换。接口 schema 使用普通字符串和长度约束，既有 UUID 字符串仍然有效。
 
 数据库相关代码统一放在 `internal/db/`：
 
@@ -158,7 +160,7 @@ modules/<业务> 的 DTO → httpapi（公共响应类型）
 httpapi → identity、apperror、pagination
 db → apperror、标准库与数据库依赖
 platform → platform 内的基础设施
-identity → apperror、标准库
+identity → apperror、validation、标准库
 apperror、pagination、validation → 标准库
 ```
 

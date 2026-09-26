@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/example/go-starter-kit/internal/modules/account"
 	"html"
 	"io"
 	"log/slog"
@@ -20,9 +19,9 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/example/go-starter-kit/internal/identity"
+	"github.com/example/go-starter-kit/internal/modules/account"
 	"github.com/example/go-starter-kit/internal/platform/password"
 	"github.com/example/go-starter-kit/tests/integration/testutil"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -170,7 +169,7 @@ func (f *accountFixture) register(email string) account.SessionCreateResponse {
 func (f *accountFixture) login(email, pw string) account.SessionCreateResponse {
 	return decode[account.SessionCreateResponse](f.t, f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": email, "password": pw}, http.StatusOK))
 }
-func (f *accountFixture) reauth(token, pw, operation, target string) uuid.UUID {
+func (f *accountFixture) reauth(token, pw, operation, target string) string {
 	v := decode[account.UserReauthenticateResponse](f.t, f.call(http.MethodPost, "/v1/me/reauthenticate", token, map[string]any{"method": "password", "password": pw, "operation": operation, "target": target}, http.StatusOK))
 	if v.ReauthenticationID == nil {
 		f.t.Fatal("缺少重新认证引用")
@@ -189,7 +188,7 @@ func (f *accountFixture) callback(flow account.AuthFlowResponse, code string, wa
 	return decode[account.AuthCallbackResponse](f.t, data)
 }
 
-func (f *accountFixture) assertFlowAuthenticatedAt(id uuid.UUID, started, completed time.Time) {
+func (f *accountFixture) assertFlowAuthenticatedAt(id string, started, completed time.Time) {
 	f.t.Helper()
 	var authenticatedAt *time.Time
 	if err := f.pool.QueryRow(f.t.Context(), "SELECT authenticated_at FROM auth_flows WHERE id=$1", id).Scan(&authenticatedAt); err != nil {

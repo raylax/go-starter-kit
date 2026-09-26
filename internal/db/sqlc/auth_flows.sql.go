@@ -8,8 +8,6 @@ package sqlc
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 const claimAuthorization = `-- name: ClaimAuthorization :execrows
@@ -18,8 +16,8 @@ WHERE id = $1 AND status = 'authorized' AND expires_at > now()
 `
 
 type ClaimAuthorizationParams struct {
-	ID        uuid.UUID
-	ClaimedBy *uuid.UUID
+	ID        string
+	ClaimedBy *string
 }
 
 func (q *Queries) ClaimAuthorization(ctx context.Context, arg ClaimAuthorizationParams) (int64, error) {
@@ -34,7 +32,7 @@ const claimFlow = `-- name: ClaimFlow :execrows
 UPDATE auth_flows SET status = 'processing' WHERE id = $1 AND status = 'pending' AND expires_at > now()
 `
 
-func (q *Queries) ClaimFlow(ctx context.Context, id uuid.UUID) (int64, error) {
+func (q *Queries) ClaimFlow(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, claimFlow, id)
 	if err != nil {
 		return 0, err
@@ -49,19 +47,19 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 `
 
 type CreateFlowParams struct {
-	ID                 uuid.UUID
+	ID                 string
 	Purpose            string
 	TokenHash          []byte
 	ProviderID         string
 	ConfigVersion      string
-	UserID             *uuid.UUID
-	SessionID          *uuid.UUID
+	UserID             *string
+	SessionID          *string
 	AuthVersion        int64
-	AccountID          *uuid.UUID
+	AccountID          *string
 	AccountVersion     int64
 	Operation          string
 	Target             string
-	ReauthenticationID *uuid.UUID
+	ReauthenticationID *string
 	StateHash          []byte
 	ProtocolState      []byte
 	Status             string
@@ -121,7 +119,7 @@ const failFlow = `-- name: FailFlow :exec
 UPDATE auth_flows SET status = 'failed', protocol_state = NULL WHERE id = $1 AND status IN ('pending', 'processing')
 `
 
-func (q *Queries) FailFlow(ctx context.Context, id uuid.UUID) error {
+func (q *Queries) FailFlow(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, failFlow, id)
 	return err
 }
@@ -167,7 +165,7 @@ WHERE id = $1 AND status = $2 AND expires_at > now()
 `
 
 type FinishFlowParams struct {
-	ID     uuid.UUID
+	ID     string
 	Status string
 }
 
@@ -183,7 +181,7 @@ const getFlow = `-- name: GetFlow :one
 SELECT id, purpose, token_hash, provider_id, config_version, user_id, session_id, auth_version, account_id, account_version, operation, target, reauthentication_id, claimed_by, state_hash, protocol_state, verified_namespace, verified_subject, verified_name, authenticated_at, status, created_at, expires_at FROM auth_flows WHERE id = $1 AND expires_at > now()
 `
 
-func (q *Queries) GetFlow(ctx context.Context, id uuid.UUID) (AuthFlow, error) {
+func (q *Queries) GetFlow(ctx context.Context, id string) (AuthFlow, error) {
 	row := q.db.QueryRow(ctx, getFlow, id)
 	var i AuthFlow
 	err := row.Scan(
@@ -221,7 +219,7 @@ WHERE id = $1 AND status = 'processing' AND expires_at > now()
 `
 
 type VerifyFlowParams struct {
-	ID                uuid.UUID
+	ID                string
 	Status            string
 	VerifiedNamespace string
 	VerifiedSubject   string

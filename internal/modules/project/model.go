@@ -3,8 +3,6 @@ package project
 import (
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/example/go-starter-kit/internal/apperror"
 )
 
@@ -15,7 +13,7 @@ var (
 )
 
 type Record struct {
-	ID          uuid.UUID
+	ID          string
 	Name        string
 	Description string
 	CreatedAt   time.Time

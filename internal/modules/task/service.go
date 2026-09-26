@@ -8,7 +8,6 @@ import (
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
 	"github.com/example/go-starter-kit/internal/validation"
-	"github.com/google/uuid"
 )
 
 // 字符数上限与 dto.go 的 maxLength 标签保持一致。
@@ -34,13 +33,16 @@ func (s *Service) Create(ctx context.Context, owner string, input Details) (Reco
 	if err != nil {
 		return Record{}, err
 	}
-	row, err := s.queries.CreateTask(ctx, sqlc.CreateTaskParams{ID: uuid.New(), OwnerID: owner, Title: input.Title, Description: input.Description, Status: string(input.Status)})
+	row, err := s.queries.CreateTask(ctx, sqlc.CreateTaskParams{ID: identity.NewID(), OwnerID: owner, Title: input.Title, Description: input.Description, Status: string(input.Status)})
 	return fromRow(row), db.MapError(err, storageErrors)
 }
 
-func (s *Service) Get(ctx context.Context, owner string, id uuid.UUID) (Record, error) {
+func (s *Service) Get(ctx context.Context, owner string, id string) (Record, error) {
 	if err := identity.RequireSubject(owner); err != nil {
 		return Record{}, err
+	}
+	if !validation.Identifier(id) {
+		return Record{}, ErrInvalid
 	}
 	row, err := s.queries.GetTask(ctx, sqlc.GetTaskParams{ID: id, OwnerID: owner})
 	return fromRow(row), db.MapError(err, storageErrors)
@@ -60,9 +62,12 @@ func (s *Service) List(ctx context.Context, owner string, status Status, params 
 	return pagination.Build(rows, params, fromRow)
 }
 
-func (s *Service) Update(ctx context.Context, owner string, id uuid.UUID, input Details) (Record, error) {
+func (s *Service) Update(ctx context.Context, owner string, id string, input Details) (Record, error) {
 	if err := identity.RequireSubject(owner); err != nil {
 		return Record{}, err
+	}
+	if !validation.Identifier(id) {
+		return Record{}, ErrInvalid
 	}
 	input, err := validate(input)
 	if err != nil {
@@ -72,9 +77,12 @@ func (s *Service) Update(ctx context.Context, owner string, id uuid.UUID, input 
 	return fromRow(row), db.MapError(err, storageErrors)
 }
 
-func (s *Service) Delete(ctx context.Context, owner string, id uuid.UUID) error {
+func (s *Service) Delete(ctx context.Context, owner string, id string) error {
 	if err := identity.RequireSubject(owner); err != nil {
 		return err
+	}
+	if !validation.Identifier(id) {
+		return ErrInvalid
 	}
 	count, err := s.queries.DeleteTask(ctx, sqlc.DeleteTaskParams{ID: id, OwnerID: owner})
 	if err != nil {

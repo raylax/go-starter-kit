@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 const consumeVerification = `-- name: ConsumeVerification :execrows
@@ -17,8 +15,8 @@ WHERE id = $1 AND user_id = $2 AND consumed_at IS NULL AND expires_at > now()
 `
 
 type ConsumeVerificationParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
+	ID     string
+	UserID string
 }
 
 func (q *Queries) ConsumeVerification(ctx context.Context, arg ConsumeVerificationParams) (int64, error) {
@@ -35,14 +33,14 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + $9::bigint * interval '1 second'
 `
 
 type CreateVerificationParams struct {
-	ID                 uuid.UUID
-	UserID             uuid.UUID
+	ID                 string
+	UserID             string
 	Purpose            string
 	TokenHash          []byte
 	Email              string
 	AuthVersion        int64
-	SessionID          *uuid.UUID
-	ReauthenticationID *uuid.UUID
+	SessionID          *string
+	ReauthenticationID *string
 	TtlSeconds         int64
 }
 

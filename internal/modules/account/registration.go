@@ -47,7 +47,7 @@ func (s *Service) ForgotPassword(ctx context.Context, r Request, email string) e
 	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		user, err := q.FindUserByEmail(ctx, ptr(email))
+		user, err := q.queries.FindUserByEmail(ctx, ptr(email))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -57,7 +57,7 @@ func (s *Service) ForgotPassword(ctx context.Context, r Request, email string) e
 		if UserStatus(user.Status) != UserActive || !user.RecoveryEnabled || user.EmailVerifiedAt == nil {
 			return nil
 		}
-		_, err = q.GetPasswordAccount(ctx, user.ID)
+		_, err = q.queries.GetPasswordAccount(ctx, user.ID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -77,7 +77,7 @@ func (s *Service) completeRegistration(ctx context.Context, q *store, user sqlc.
 	if _, err := q.CreateAccount(ctx, sqlc.CreateAccountParams{
 		UserID:            user.ID,
 		ProviderID:        CredentialProvider,
-		ProviderAccountID: user.ID.String(),
+		ProviderAccountID: user.ID,
 		ProviderNamespace: LocalNamespace,
 		PasswordHash:      &passwordHash,
 	}); err != nil {
@@ -90,7 +90,7 @@ func (s *Service) completePasswordReset(ctx context.Context, q *store, user sqlc
 	if UserStatus(user.Status) != UserActive || !user.RecoveryEnabled || user.EmailVerifiedAt == nil || text(user.EmailNormalized) != verification.Email {
 		return ErrCredentials
 	}
-	passwordAccount, err := q.GetPasswordAccount(ctx, user.ID)
+	passwordAccount, err := q.queries.GetPasswordAccount(ctx, user.ID)
 	if err != nil {
 		return credentialLookupError(err)
 	}

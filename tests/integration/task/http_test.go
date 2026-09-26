@@ -12,6 +12,7 @@ import (
 
 	"github.com/example/go-starter-kit/internal/modules/task"
 	"github.com/example/go-starter-kit/tests/integration/testutil"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestTaskAuthentication(t *testing.T) {
@@ -20,7 +21,7 @@ func TestTaskAuthentication(t *testing.T) {
 	testutil.Request(t, fixture.alice, http.MethodGet, "/v1/tasks", "", false, http.StatusUnauthorized)
 	testutil.Request(t, fixture.alice, http.MethodPost, "/v1/tasks", `{"title":"task"}`, false, http.StatusUnauthorized)
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		testutil.Request(t, fixture.alice, method, "/v1/tasks/"+item.ID.String(), "", false, http.StatusUnauthorized)
+		testutil.Request(t, fixture.alice, method, "/v1/tasks/"+item.ID, "", false, http.StatusUnauthorized)
 	}
 }
 
@@ -39,10 +40,10 @@ func TestTaskValidation(t *testing.T) {
 	for _, query := range []string{"status=invalid", "limit=0", "limit=101", "offset=-1", "offset=10001", "unknown=1"} {
 		testutil.Request(t, alice, http.MethodGet, "/v1/tasks?"+query, "", true, http.StatusUnprocessableEntity)
 	}
-	testutil.Request(t, alice, http.MethodGet, "/v1/tasks/not-a-uuid", "", true, http.StatusUnprocessableEntity)
+	testutil.Request(t, alice, http.MethodGet, "/v1/tasks/not-a-uuid", "", true, http.StatusNotFound)
 	item := createTask(t, alice, task.TaskCreateRequest{Title: "用于更新校验"})
 	for _, body := range []string{`{"title":"task"}`, `{"title":"task","status":""}`, `{"title":"task","status":"archived"}`} {
-		testutil.Request(t, alice, http.MethodPut, "/v1/tasks/"+item.ID.String(), body, true, http.StatusUnprocessableEntity)
+		testutil.Request(t, alice, http.MethodPut, "/v1/tasks/"+item.ID, body, true, http.StatusUnprocessableEntity)
 	}
 }
 
@@ -54,13 +55,11 @@ func TestTaskCRUD(t *testing.T) {
 	if item.Title != "编写文档" || item.Status != task.Todo || item.CreatedAt.IsZero() {
 		t.Fatalf("创建的任务不符合预期: %+v", item)
 	}
-	if item.ID.Version() != 4 {
-		t.Fatalf("新建资源 ID 应为 UUID v4，实际为 %s", item.ID)
-	}
+
 	if strings.Contains(string(created), "owner_id") {
 		t.Fatal("响应泄漏了数据库归属字段")
 	}
-	path := "/v1/tasks/" + item.ID.String()
+	path := "/v1/tasks/" + item.ID
 	if got := decodeTask(t, testutil.Request(t, alice, http.MethodGet, path, "", true, http.StatusOK)); got.ID != item.ID || got.Description != "first" {
 		t.Fatalf("读取的任务不符合预期: %+v", got)
 	}
@@ -83,7 +82,7 @@ func TestTaskOwnership(t *testing.T) {
 	fixture := newTaskFixture(t)
 	bob := testutil.ModuleServer(t, "bob", 5*time.Second, fixture.service, task.Routes())
 	item := createTask(t, fixture.alice, task.TaskCreateRequest{Title: "归属任务", Status: task.Done})
-	path := "/v1/tasks/" + item.ID.String()
+	path := "/v1/tasks/" + item.ID
 	testutil.Request(t, bob, http.MethodGet, path, "", true, http.StatusNotFound)
 	testutil.Request(t, bob, http.MethodPut, path, `{"title":"stolen","status":"done"}`, true, http.StatusNotFound)
 	testutil.Request(t, bob, http.MethodDelete, path, "", true, http.StatusNotFound)
@@ -115,8 +114,8 @@ func TestTaskPagination(t *testing.T) {
 	if len(first.Items) != 1 || len(second.Items) != 1 || !first.HasMore || second.HasMore || first.Items[0].ID == second.Items[0].ID || first.Items[0].Status != task.Done || second.Items[0].Status != task.Done {
 		t.Fatalf("筛选分页的顺序或边界错误: %+v %+v", first, second)
 	}
-	seen := map[string]bool{first.Items[0].ID.String(): true, second.Items[0].ID.String(): true}
-	if !seen[firstDone.ID.String()] || !seen[secondDone.ID.String()] {
+	seen := map[string]bool{first.Items[0].ID: true, second.Items[0].ID: true}
+	if !seen[firstDone.ID] || !seen[secondDone.ID] {
 		t.Fatal("分页遗漏了当前场景创建的已完成任务")
 	}
 	if empty := listTasks(t, fixture.alice, "?status=todo"); empty.Items == nil || len(empty.Items) != 0 || empty.HasMore {
@@ -128,6 +127,7 @@ func TestTaskPagination(t *testing.T) {
 }
 
 type taskFixture struct {
+	pool    *pgxpool.Pool
 	service *task.Service
 	alice   *httptest.Server
 }
@@ -137,7 +137,7 @@ func newTaskFixture(t *testing.T) taskFixture {
 	pool, _ := testutil.Database(t)
 	service := task.NewService(pool)
 	alice := testutil.ModuleServer(t, "alice", 5*time.Second, service, task.Routes())
-	return taskFixture{service: service, alice: alice}
+	return taskFixture{pool: pool, service: service, alice: alice}
 }
 
 func createTask(t *testing.T, server *httptest.Server, input task.TaskCreateRequest) task.Task {
@@ -166,4 +166,18 @@ func listTasks(t *testing.T, server *httptest.Server, query string) task.TaskLis
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestTaskStringIdentifier(t *testing.T) {
+	fixture := newTaskFixture(t)
+	const id = "task_custom"
+	if _, err := fixture.pool.Exec(t.Context(), "INSERT INTO tasks(id,owner_id,title) VALUES($1,'alice','自定义标识')", id); err != nil {
+		t.Fatal(err)
+	}
+	item := decodeTask(t, testutil.Request(t, fixture.alice, http.MethodGet, "/v1/tasks/"+id, "", true, http.StatusOK))
+	if item.ID != id {
+		t.Fatal("资源标识被格式化或替换")
+	}
+	testutil.Request(t, fixture.alice, http.MethodDelete, "/v1/tasks/"+id, "", true, http.StatusNoContent)
+	testutil.Request(t, fixture.alice, http.MethodGet, "/v1/tasks/"+id, "", true, http.StatusNotFound)
 }

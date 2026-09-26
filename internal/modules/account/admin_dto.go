@@ -2,7 +2,6 @@ package account
 
 import (
 	"github.com/example/go-starter-kit/internal/httpapi"
-	"github.com/google/uuid"
 )
 
 type UserStatusUpdateRequest struct {
@@ -10,7 +9,7 @@ type UserStatusUpdateRequest struct {
 }
 
 type StatusInput struct {
-	ID   uuid.UUID `path:"id"`
+	ID   string `path:"id" minLength:"1" maxLength:"255"`
 	Body UserStatusUpdateRequest
 }
 

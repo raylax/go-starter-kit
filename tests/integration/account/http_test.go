@@ -15,7 +15,6 @@ import (
 	"github.com/example/go-starter-kit/internal/authorization"
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/modules/account"
-	"github.com/google/uuid"
 )
 
 func TestAccountHTTP(t *testing.T) {
@@ -32,22 +31,22 @@ func TestAccountHTTP(t *testing.T) {
 			t.Fatal("注册模型错误")
 		}
 		var resourceType, resourceID, scopeSubject, actorID string
-		var auditSession uuid.UUID
-		if err := f.pool.QueryRow(t.Context(), "SELECT resource_type, resource_id, scope_subject, actor_id, session_id FROM audit_events WHERE action='auth.login' AND resource_id=$1", alice.SessionID.String()).Scan(&resourceType, &resourceID, &scopeSubject, &actorID, &auditSession); err != nil {
+		var auditSession string
+		if err := f.pool.QueryRow(t.Context(), "SELECT resource_type, resource_id, scope_subject, actor_id, session_id FROM audit_events WHERE action='auth.login' AND resource_id=$1", alice.SessionID).Scan(&resourceType, &resourceID, &scopeSubject, &actorID, &auditSession); err != nil {
 			t.Fatal(err)
 		}
-		if resourceType != "session" || resourceID != alice.SessionID.String() || scopeSubject != me.User.ID.String() || actorID != me.User.ID.String() || auditSession != alice.SessionID {
+		if resourceType != "session" || resourceID != alice.SessionID || scopeSubject != me.User.ID || actorID != me.User.ID || auditSession != alice.SessionID {
 			t.Fatal("登录审计混淆了会话资源、操作用户或归属主体")
 		}
 		f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice", "role": "admin"}, http.StatusUnprocessableEntity)
 		f.call(http.MethodPatch, "/v1/me", alice.Token, map[string]any{"display_name": "Alice"}, http.StatusOK)
 		f.call(http.MethodGet, "/v1/admin/users", alice.Token, nil, http.StatusForbidden)
-		f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID.String(), bob.Token, nil, http.StatusNotFound)
-		f.call(http.MethodGet, "/v1/me", alice.SessionID.String(), nil, http.StatusUnauthorized)
+		f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID, bob.Token, nil, http.StatusNotFound)
+		f.call(http.MethodGet, "/v1/me", alice.SessionID, nil, http.StatusUnauthorized)
 		f.call(http.MethodGet, "/v1/me", f.challenge("alice@example.com", "register"), nil, http.StatusUnauthorized)
 		f.call(http.MethodPost, "/v1/auth/verify", "", map[string]any{"token": f.challenge("alice@example.com", "register"), "purpose": "register", "new_password": testPassword}, http.StatusUnprocessableEntity)
 		f.call(http.MethodPost, "/v1/auth/login", "", map[string]any{"email": "alice@example.com", "password": "wrong"}, http.StatusUnauthorized)
-		f.call(http.MethodPost, "/v1/me/reauthenticate", alice.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID.String()}, http.StatusConflict)
+		f.call(http.MethodPost, "/v1/me/reauthenticate", alice.Token, map[string]any{"method": "password", "password": testPassword, "operation": "unlink_account", "target": me.Accounts[0].ID}, http.StatusConflict)
 	})
 
 	t.Run("第三方绑定与目的隔离", func(t *testing.T) {
@@ -163,14 +162,14 @@ func TestAccountHTTP(t *testing.T) {
 		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 		alice = f.login("alice@example.com", testPassword)
 		f.call(http.MethodGet, "/v1/admin/users", alice.Token, nil, http.StatusOK)
-		f.call(http.MethodPatch, "/v1/admin/users/"+bobMe.User.ID.String()+"/status", alice.Token, map[string]any{"status": "disabled"}, http.StatusOK)
+		f.call(http.MethodPatch, "/v1/admin/users/"+bobMe.User.ID+"/status", alice.Token, map[string]any{"status": "disabled"}, http.StatusOK)
 		f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusUnauthorized)
-		f.call(http.MethodPatch, "/v1/admin/users/"+bobMe.User.ID.String()+"/status", alice.Token, map[string]any{"status": "active"}, http.StatusOK)
+		f.call(http.MethodPatch, "/v1/admin/users/"+bobMe.User.ID+"/status", alice.Token, map[string]any{"status": "active"}, http.StatusOK)
 		f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusUnauthorized)
 		bob = f.login("bob@example.com", testPassword)
-		f.call(http.MethodDelete, "/v1/admin/users/"+bobMe.User.ID.String()+"/sessions", alice.Token, nil, http.StatusNoContent)
+		f.call(http.MethodDelete, "/v1/admin/users/"+bobMe.User.ID+"/sessions", alice.Token, nil, http.StatusNoContent)
 		f.call(http.MethodGet, "/v1/me", bob.Token, nil, http.StatusUnauthorized)
-		f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID.String(), alice.Token, nil, http.StatusNoContent)
+		f.call(http.MethodDelete, "/v1/me/sessions/"+alice.SessionID, alice.Token, nil, http.StatusNoContent)
 		f.call(http.MethodGet, "/v1/me", alice.Token, nil, http.StatusUnauthorized)
 	})
 	t.Run("会话摘要与数据库故障", func(t *testing.T) {
@@ -241,7 +240,7 @@ func TestFederatedUserPasswordAndUnlink(t *testing.T) {
 	session := login("register")
 	me := decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusOK))
 	social := me.Accounts[0].ID
-	proof := func(operation, target string) uuid.UUID {
+	proof := func(operation, target string) string {
 		result := decode[account.UserReauthenticateResponse](t, f.call(http.MethodPost, "/v1/me/reauthenticate", session.Token, map[string]any{
 			"method": "oauth", "account_id": social, "operation": operation, "target": target,
 		}, http.StatusOK))
@@ -266,8 +265,8 @@ func TestFederatedUserPasswordAndUnlink(t *testing.T) {
 	f.call(http.MethodPut, "/v1/me/password", session.Token, map[string]any{"new_password": testPassword, "reauthentication_id": passwordProof}, http.StatusNoContent)
 	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusUnauthorized)
 	session = f.login("social@example.com", testPassword)
-	unlinkProof := f.reauth(session.Token, testPassword, "unlink_account", social.String())
-	f.call(http.MethodPost, "/v1/me/accounts/"+social.String()+"/unlink", session.Token, map[string]any{"reauthentication_id": unlinkProof}, http.StatusNoContent)
+	unlinkProof := f.reauth(session.Token, testPassword, "unlink_account", social)
+	f.call(http.MethodPost, "/v1/me/accounts/"+social+"/unlink", session.Token, map[string]any{"reauthentication_id": unlinkProof}, http.StatusNoContent)
 	f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusUnauthorized)
 	session = f.login("social@example.com", testPassword)
 	me = decode[account.UserProfile](t, f.call(http.MethodGet, "/v1/me", session.Token, nil, http.StatusOK))
@@ -305,7 +304,7 @@ func TestLoginCannotRacePasswordChange(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("密码验证未完成")
 	}
-	err := f.s.SetPassword(t.Context(), account.Request{Subject: authorization.Subject{UserID: me.User.ID.String(), SessionID: session.SessionID.String()}}, testPassword, "a freshly changed password", uuid.Nil)
+	err := f.s.SetPassword(t.Context(), account.Request{Subject: authorization.Subject{UserID: me.User.ID, SessionID: session.SessionID}}, testPassword, "a freshly changed password", "")
 	close(resume)
 	if err != nil {
 		t.Fatal(err)

@@ -3,14 +3,12 @@ package project
 import (
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/example/go-starter-kit/internal/httpapi"
 )
 
 // Project 是独立于数据库类型的接口表示。
 type Project struct {
-	ID          uuid.UUID `json:"id" format:"uuid"`
+	ID          string    `json:"id" minLength:"1" maxLength:"255"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -27,10 +25,10 @@ type ProjectUpdateRequest ProjectCreateRequest
 
 type CreateInput struct{ Body ProjectCreateRequest }
 type IDInput struct {
-	ID uuid.UUID `path:"id" format:"uuid"`
+	ID string `path:"id" minLength:"1" maxLength:"255"`
 }
 type UpdateInput struct {
-	ID   uuid.UUID `path:"id" format:"uuid"`
+	ID   string `path:"id" minLength:"1" maxLength:"255"`
 	Body ProjectUpdateRequest
 }
 type ListInput struct {

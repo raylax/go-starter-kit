@@ -11,12 +11,6 @@ sql:
         emit_empty_slices: true
         omit_unused_structs: true
         overrides:
-          - db_type: uuid
-            nullable: true
-            go_type:
-              import: github.com/google/uuid
-              type: UUID
-              pointer: true
           - db_type: timestamptz
             nullable: true
             go_type:
@@ -28,10 +22,6 @@ sql:
             go_type:
               type: string
               pointer: true
-          - db_type: uuid
-            go_type:
-              import: github.com/google/uuid
-              type: UUID
           - db_type: timestamptz
             go_type:
               import: time

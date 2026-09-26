@@ -6,24 +6,27 @@ import (
 
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/validation"
 	"github.com/jackc/pgx/v5"
 )
 
 const maxLoginAccounts = 10
 
-func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) (failureErr error) {
+func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID string) (failureErr error) {
 	defer func() {
 		failureErr = proofError(failureErr, ErrFlow)
 		s.recordFailure(ctx, r, "account.link", failureErr)
 	}()
+	if !validation.Identifier(flowID) {
+		return ErrFlow
+	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
 		user, session, err := s.lockSelf(ctx, q, r)
 		if err != nil {
 			return err
 		}
-		flow, err := q.GetFlow(ctx, flowID)
+		flow, err := q.queries.GetFlow(ctx, flowID)
 		if err != nil {
 			return credentialLookupError(err)
 		}
@@ -34,7 +37,7 @@ func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) 
 			return ErrCredentials
 		}
 		if FlowStatus(flow.Status) == FlowConsumed {
-			account, err := q.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: flow.VerifiedNamespace, ProviderAccountID: flow.VerifiedSubject})
+			account, err := q.queries.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: flow.VerifiedNamespace, ProviderAccountID: flow.VerifiedSubject})
 			if err != nil {
 				return credentialLookupError(err)
 			}
@@ -50,13 +53,13 @@ func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) 
 		if err != nil {
 			return err
 		}
-		account, err := q.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: flow.VerifiedNamespace, ProviderAccountID: flow.VerifiedSubject})
+		account, err := q.queries.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: flow.VerifiedNamespace, ProviderAccountID: flow.VerifiedSubject})
 		if err == nil {
 			if account.UserID != user.ID {
 				return ErrConflict
 			}
 		} else if errors.Is(err, pgx.ErrNoRows) {
-			rows, err := q.ListAccounts(ctx, user.ID)
+			rows, err := q.queries.ListAccounts(ctx, user.ID)
 			if err != nil {
 				return err
 			}
@@ -89,33 +92,36 @@ func (s *Service) ConfirmLink(ctx context.Context, r Request, flowID uuid.UUID) 
 			Action:       "account.link",
 			Outcome:      AuditSuccess,
 			ResourceType: "account",
-			ResourceID:   account.ID.String(),
-			ScopeSubject: user.ID.String(),
+			ResourceID:   account.ID,
+			ScopeSubject: user.ID,
 			Metadata:     metadata,
 		})
 	})
 }
 
-func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID uuid.UUID) (failureErr error) {
+func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID string) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "account.unlink", &failureErr)
+	if !validation.Identifier(id) {
+		return ErrInvalid
+	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
 		user, _, err := s.lockSelf(ctx, q, r)
 		if err != nil {
 			return err
 		}
-		account, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: id, UserID: user.ID})
+		account, err := q.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: id, UserID: user.ID})
 		if err != nil {
 			return err
 		}
-		proof, err := s.authorization(ctx, q, r, reauthID, OperationUnlinkAccount, id.String(), nil)
+		proof, err := s.authorization(ctx, q, r, reauthID, OperationUnlinkAccount, id, nil)
 		if err != nil {
 			return err
 		}
 		if proof.AccountID == nil || *proof.AccountID == id {
 			return ErrLastAccount
 		}
-		rows, err := q.ListAccounts(ctx, user.ID)
+		rows, err := q.queries.ListAccounts(ctx, user.ID)
 		if err != nil {
 			return err
 		}
@@ -145,8 +151,8 @@ func (s *Service) Unlink(ctx context.Context, r Request, id, reauthID uuid.UUID)
 			Action:       "account.unlink",
 			Outcome:      AuditSuccess,
 			ResourceType: "account",
-			ResourceID:   id.String(),
-			ScopeSubject: user.ID.String(),
+			ResourceID:   id,
+			ScopeSubject: user.ID,
 			Metadata:     metadata,
 		})
 	})

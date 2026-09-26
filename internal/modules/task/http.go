@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"net/http"
+	"net/url"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/example/go-starter-kit/internal/httpapi"
@@ -94,4 +95,4 @@ func deleteTask(service *Service, ctx context.Context, input *TaskIDInput) error
 	return service.Delete(ctx, identity.Subject(ctx), input.ID)
 }
 
-func taskLocation(item Task) string { return "/v1/tasks/" + item.ID.String() }
+func taskLocation(item Task) string { return "/v1/tasks/" + url.PathEscape(item.ID) }

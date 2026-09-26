@@ -17,7 +17,7 @@ const (
 
 func (s *Service) limit(ctx context.Context, category, key string, max int32, window time.Duration) error {
 	digest := sha256.Sum256([]byte(category + "\x00" + key))
-	bucket, e := s.queries.RateLimit(ctx, sqlc.RateLimitParams{BucketKey: digest[:], WindowSeconds: int64(window.Seconds())})
+	bucket, e := s.store.RateLimit(ctx, sqlc.RateLimitParams{BucketKey: digest[:], WindowSeconds: int64(window.Seconds())})
 	if e != nil {
 		return apperror.Wrap(ErrUnavailable, e)
 	}

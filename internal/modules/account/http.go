@@ -9,7 +9,6 @@ import (
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/pagination"
-	"github.com/google/uuid"
 )
 
 const maxRequestBodyBytes = 16 << 10 // 16 KiB
@@ -319,7 +318,7 @@ func reauthenticateUser(service *Service, ctx context.Context, input *Reauthenti
 }
 
 func setPassword(service *Service, ctx context.Context, input *PasswordInput) error {
-	id := uuid.Nil
+	id := ""
 	if input.Body.ReauthenticationID != nil {
 		id = *input.Body.ReauthenticationID
 	}
@@ -351,5 +350,5 @@ func revokeSession(service *Service, ctx context.Context, input *IDInput) error 
 }
 
 func revokeMySessions(service *Service, ctx context.Context, _ *struct{}) error {
-	return service.RevokeSession(ctx, request(ctx), uuid.Nil, true)
+	return service.RevokeSession(ctx, request(ctx), "", true)
 }

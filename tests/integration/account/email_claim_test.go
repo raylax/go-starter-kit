@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/example/go-starter-kit/internal/modules/account"
-	"github.com/google/uuid"
 )
 
 func TestVerifiedEmailReclaimsPendingRegistration(t *testing.T) {
@@ -26,7 +25,7 @@ func TestVerifiedEmailReclaimsPendingRegistration(t *testing.T) {
 			const email = "claimed@example.com"
 			f.call(http.MethodPost, "/v1/auth/register", "", map[string]any{"email": email}, http.StatusAccepted)
 			registrationToken := f.challenge(email, "register")
-			var pendingID uuid.UUID
+			var pendingID string
 			if err := f.pool.QueryRow(t.Context(), "SELECT id FROM users WHERE email_normalized=$1", email).Scan(&pendingID); err != nil {
 				t.Fatal(err)
 			}

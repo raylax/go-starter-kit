@@ -12,10 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/example/go-starter-kit/internal/httpapi"
 	"github.com/example/go-starter-kit/internal/identity"
+	"github.com/example/go-starter-kit/internal/validation"
 )
 
 // ModuleServer 只装配待测模块，避免模块测试依赖整个应用。
@@ -49,9 +48,8 @@ func Request(t *testing.T, server *httptest.Server, method, path, body string, a
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	requestID, err := uuid.Parse(response.Header.Get("X-Request-ID"))
-	if err != nil || requestID.Version() != 4 {
-		t.Fatal("响应缺少有效的 UUID v4 请求 ID")
+	if !validation.Identifier(response.Header.Get("X-Request-ID")) {
+		t.Fatal("响应缺少有效的请求 ID")
 	}
 	data, err := io.ReadAll(response.Body)
 	if err != nil {

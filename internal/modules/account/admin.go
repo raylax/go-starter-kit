@@ -2,10 +2,11 @@ package account
 
 import (
 	"context"
+
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/example/go-starter-kit/internal/pagination"
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/validation"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -17,16 +18,16 @@ func (s *Service) Users(ctx context.Context, r Request, p pagination.Params) (_ 
 	if err := s.deps.Authorizer.RequireAdmin(ctx, r.Subject); err != nil {
 		return pagination.Result[UserRecord]{}, err
 	}
-	rows, err := s.queries.ListUsers(ctx, sqlc.ListUsersParams{Limit: p.FetchLimit(), Offset: p.Offset})
+	rows, err := s.store.queries.ListUsers(ctx, sqlc.ListUsersParams{Limit: p.FetchLimit(), Offset: p.Offset})
 	if err != nil {
 		return pagination.Result[UserRecord]{}, db.MapError(err, storageErrors)
 	}
 	return pagination.Build(rows, p, userRecord)
 }
 
-func (s *Service) SetStatus(ctx context.Context, r Request, id uuid.UUID, status UserStatus) (_ UserRecord, failureErr error) {
+func (s *Service) SetStatus(ctx context.Context, r Request, id string, status UserStatus) (_ UserRecord, failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "user.status_change", &failureErr)
-	if !status.Settable() {
+	if !validation.Identifier(id) || !status.Settable() {
 		return UserRecord{}, ErrInvalid
 	}
 	if err := s.deps.Authorizer.RequireAdmin(ctx, r.Subject); err != nil {
@@ -35,7 +36,7 @@ func (s *Service) SetStatus(ctx context.Context, r Request, id uuid.UUID, status
 	var result UserRecord
 	e := db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		u, e := q.GetUser(ctx, id)
+		u, e := q.queries.GetUser(ctx, id)
 		if e != nil {
 			return e
 		}
@@ -54,8 +55,8 @@ func (s *Service) SetStatus(ctx context.Context, r Request, id uuid.UUID, status
 			Action:       "user.status_change",
 			Outcome:      AuditSuccess,
 			ResourceType: "user",
-			ResourceID:   id.String(),
-			ScopeSubject: id.String(),
+			ResourceID:   id,
+			ScopeSubject: id,
 			Metadata:     metadata,
 		}); e != nil {
 			return e
@@ -65,14 +66,17 @@ func (s *Service) SetStatus(ctx context.Context, r Request, id uuid.UUID, status
 	})
 	return result, e
 }
-func (s *Service) RevokeUserSessions(ctx context.Context, r Request, id uuid.UUID) (failureErr error) {
+func (s *Service) RevokeUserSessions(ctx context.Context, r Request, id string) (failureErr error) {
 	defer s.recordFailureOnReturn(ctx, r, "session.revoke_all", &failureErr)
+	if !validation.Identifier(id) {
+		return ErrInvalid
+	}
 	if err := s.deps.Authorizer.RequireAdmin(ctx, r.Subject); err != nil {
 		return err
 	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		if _, e := q.GetUser(ctx, id); e != nil {
+		if _, e := q.queries.GetUser(ctx, id); e != nil {
 			return e
 		}
 		if e := s.invalidate(ctx, q, id); e != nil {
@@ -82,8 +86,8 @@ func (s *Service) RevokeUserSessions(ctx context.Context, r Request, id uuid.UUI
 			Action:       "session.revoke_all",
 			Outcome:      AuditSuccess,
 			ResourceType: "user",
-			ResourceID:   id.String(),
-			ScopeSubject: id.String(),
+			ResourceID:   id,
+			ScopeSubject: id,
 		})
 	})
 }

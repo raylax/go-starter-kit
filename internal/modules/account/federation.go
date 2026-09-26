@@ -36,7 +36,7 @@ func (s *Service) Callback(ctx context.Context, r Request, token, code, state st
 	if err != nil {
 		return CallbackResult{}, ErrCredentials
 	}
-	flow, err := s.queries.FindFlow(ctx, hash)
+	flow, err := s.store.queries.FindFlow(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CallbackResult{}, ErrCredentials
 	}
@@ -52,7 +52,7 @@ func (s *Service) Callback(ctx context.Context, r Request, token, code, state st
 	if s.deps.Federation.Version(flow.ProviderID) != flow.ConfigVersion {
 		return CallbackResult{}, ErrCredentials
 	}
-	if err := s.queries.claimPendingFlow(ctx, flow.ID); err != nil {
+	if err := s.store.claimPendingFlow(ctx, flow.ID); err != nil {
 		return CallbackResult{}, err
 	}
 	completed := false
@@ -60,7 +60,7 @@ func (s *Service) Callback(ctx context.Context, r Request, token, code, state st
 		if !completed {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			defer cancel()
-			_ = s.queries.FailFlow(cleanup, flow.ID)
+			_ = s.store.FailFlow(cleanup, flow.ID)
 		}
 	}()
 	var protocol protocolState
@@ -105,8 +105,8 @@ func (s *Service) completeBoundFlow(ctx context.Context, r Request, flow sqlc.Au
 		}
 		bound := Request{
 			Subject: authorization.Subject{
-				UserID:    flow.UserID.String(),
-				SessionID: flow.SessionID.String(),
+				UserID:    *flow.UserID,
+				SessionID: *flow.SessionID,
 			},
 			RequestID: r.RequestID,
 		}
@@ -137,7 +137,7 @@ func (s *Service) completeReauthentication(ctx context.Context, q *store, user s
 	if flow.AccountID == nil {
 		return CallbackResult{}, ErrCredentials
 	}
-	account, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: *flow.AccountID, UserID: user.ID})
+	account, err := q.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: *flow.AccountID, UserID: user.ID})
 	if err != nil {
 		return CallbackResult{}, credentialLookupError(err)
 	}
@@ -164,7 +164,7 @@ func (s *Service) completeLinkProof(ctx context.Context, q *store, bound Request
 }
 
 func (s *Service) completeLogin(ctx context.Context, r Request, flow sqlc.AuthFlow, verified VerifiedIdentity) (CallbackResult, error) {
-	account, findErr := s.queries.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: verified.Namespace, ProviderAccountID: verified.Subject})
+	account, findErr := s.store.queries.FindProviderAccount(ctx, sqlc.FindProviderAccountParams{ProviderNamespace: verified.Namespace, ProviderAccountID: verified.Subject})
 	if findErr != nil && !errors.Is(findErr, pgx.ErrNoRows) {
 		return CallbackResult{}, findErr
 	}
@@ -177,11 +177,11 @@ func (s *Service) completeLogin(ctx context.Context, r Request, flow sqlc.AuthFl
 		var user sqlc.User
 		var err error
 		if findErr == nil {
-			user, err = q.LockUser(ctx, account.UserID)
+			user, err = q.queries.LockUser(ctx, account.UserID)
 			if err != nil {
 				return err
 			}
-			current, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: account.UserID})
+			current, err := q.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: account.UserID})
 			if err != nil {
 				return credentialLookupError(err)
 			}
@@ -204,15 +204,15 @@ func (s *Service) completeLogin(ctx context.Context, r Request, flow sqlc.AuthFl
 				return err
 			}
 			registrationRequest := Request{
-				Subject:   authorization.Subject{UserID: user.ID.String()},
+				Subject:   authorization.Subject{UserID: user.ID},
 				RequestID: r.RequestID,
 			}
 			if err = audit(ctx, q, registrationRequest, auditEvent{
 				Action:       "auth.register",
 				Outcome:      AuditSuccess,
 				ResourceType: "user",
-				ResourceID:   user.ID.String(),
-				ScopeSubject: user.ID.String(),
+				ResourceID:   user.ID,
+				ScopeSubject: user.ID,
 			}); err != nil {
 				return err
 			}

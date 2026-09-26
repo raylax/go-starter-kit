@@ -7,7 +7,8 @@ import (
 
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"github.com/google/uuid"
+	"github.com/example/go-starter-kit/internal/identity"
+	"github.com/example/go-starter-kit/internal/validation"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -18,7 +19,7 @@ func (s *Service) validateOperation(operation Operation, target string) error {
 			return ErrInvalid
 		}
 	case OperationUnlinkAccount:
-		if _, err := uuid.Parse(target); err != nil {
+		if !validation.Identifier(target) {
 			return ErrInvalid
 		}
 	case OperationSetPassword:
@@ -37,8 +38,11 @@ func (s *Service) validateOperation(operation Operation, target string) error {
 }
 
 // authorization 校验原会话、精确用途、证明账号版本和一次性认领状态。
-func (s *Service) authorization(ctx context.Context, q *store, r Request, id uuid.UUID, operation Operation, target string, claim *uuid.UUID) (sqlc.AuthFlow, error) {
-	proof, err := q.GetFlow(ctx, id)
+func (s *Service) authorization(ctx context.Context, q *store, r Request, id string, operation Operation, target string, claim *string) (sqlc.AuthFlow, error) {
+	if !validation.Identifier(id) {
+		return sqlc.AuthFlow{}, ErrReauthentication
+	}
+	proof, err := q.queries.GetFlow(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return proof, ErrReauthentication
 	}
@@ -48,7 +52,7 @@ func (s *Service) authorization(ctx context.Context, q *store, r Request, id uui
 	if FlowPurpose(proof.Purpose) != FlowReauthenticate || proof.UserID == nil || proof.SessionID == nil || proof.AccountID == nil {
 		return proof, ErrReauthentication
 	}
-	if proof.UserID.String() != r.UserID || proof.SessionID.String() != r.SessionID {
+	if *proof.UserID != r.UserID || *proof.SessionID != r.SessionID {
 		return proof, ErrReauthentication
 	}
 	if Operation(proof.Operation) != operation || proof.Target != target {
@@ -61,21 +65,21 @@ func (s *Service) authorization(ctx context.Context, q *store, r Request, id uui
 	} else if FlowStatus(proof.Status) != FlowClaimed || proof.ClaimedBy == nil || *proof.ClaimedBy != *claim {
 		return proof, ErrReauthentication
 	}
-	user, err := q.GetUser(ctx, *proof.UserID)
+	user, err := q.queries.GetUser(ctx, *proof.UserID)
 	if err != nil {
 		return proof, proofError(credentialLookupError(err), ErrReauthentication)
 	}
 	if UserStatus(user.Status) != UserActive || user.AuthVersion != proof.AuthVersion {
 		return proof, ErrReauthentication
 	}
-	account, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: *proof.AccountID, UserID: user.ID})
+	account, err := q.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: *proof.AccountID, UserID: user.ID})
 	if err != nil {
 		return proof, proofError(credentialLookupError(err), ErrReauthentication)
 	}
 	if account.Version != proof.AccountVersion || !s.accountEnabled(account) {
 		return proof, ErrReauthentication
 	}
-	if _, err = q.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *proof.SessionID, UserID: user.ID}); err != nil {
+	if _, err = q.queries.GetValidSession(ctx, sqlc.GetValidSessionParams{ID: *proof.SessionID, UserID: user.ID}); err != nil {
 		return proof, proofError(credentialLookupError(err), ErrReauthentication)
 	}
 	return proof, nil
@@ -93,15 +97,18 @@ func (s *Service) Reauthenticate(ctx context.Context, r Request, input Reauthent
 	if err := s.entryLimit(ctx, r, "reauth", r.UserID); err != nil {
 		return ReauthenticationResult{}, err
 	}
-	user, _, err := s.readSelf(ctx, s.queries, r)
+	user, _, err := s.readSelf(ctx, s.store, r)
 	if err != nil {
 		return ReauthenticationResult{}, db.MapError(err, storageErrors)
 	}
 	var account sqlc.Account
 	if input.Method == MethodPassword {
-		account, err = s.queries.GetPasswordAccount(ctx, user.ID)
+		account, err = s.store.queries.GetPasswordAccount(ctx, user.ID)
 	} else if input.Method == MethodOAuth {
-		account, err = s.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: input.AccountID, UserID: user.ID})
+		if !validation.Identifier(input.AccountID) {
+			return ReauthenticationResult{}, ErrInvalid
+		}
+		account, err = s.store.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: input.AccountID, UserID: user.ID})
 	} else {
 		return ReauthenticationResult{}, ErrInvalid
 	}
@@ -111,7 +118,7 @@ func (s *Service) Reauthenticate(ctx context.Context, r Request, input Reauthent
 	if err != nil {
 		return ReauthenticationResult{}, err
 	}
-	if input.Operation == OperationUnlinkAccount && account.ID.String() == input.Target {
+	if input.Operation == OperationUnlinkAccount && account.ID == input.Target {
 		return ReauthenticationResult{}, ErrLastAccount
 	}
 	if input.Method == MethodOAuth {
@@ -135,7 +142,7 @@ func (s *Service) Reauthenticate(ctx context.Context, r Request, input Reauthent
 		if err != nil {
 			return err
 		}
-		currentAccount, err := q.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: user.ID})
+		currentAccount, err := q.queries.GetAccount(ctx, sqlc.GetAccountParams{ID: account.ID, UserID: user.ID})
 		if err != nil {
 			return proofError(credentialLookupError(err), ErrReauthentication)
 		}
@@ -143,7 +150,7 @@ func (s *Service) Reauthenticate(ctx context.Context, r Request, input Reauthent
 			return ErrReauthentication
 		}
 		now := time.Now()
-		id := uuid.New()
+		id := identity.NewID()
 		_, err = q.CreateFlow(ctx, sqlc.CreateFlowParams{
 			ID:              id,
 			Purpose:         string(FlowReauthenticate),

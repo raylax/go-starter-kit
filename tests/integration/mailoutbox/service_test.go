@@ -5,28 +5,28 @@ package mailoutbox_test
 import (
 	"context"
 	"errors"
-	"github.com/example/go-starter-kit/internal/modules/mailoutbox"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/example/go-starter-kit/internal/db/sqlc"
+	"github.com/example/go-starter-kit/internal/identity"
+	"github.com/example/go-starter-kit/internal/modules/mailoutbox"
 	"github.com/example/go-starter-kit/tests/integration/testutil"
-	"github.com/google/uuid"
 )
 
 func TestRetryAndClearPayload(t *testing.T) {
 	pool, _ := testutil.Database(t)
 	q := sqlc.New(pool)
-	id := uuid.New()
+	id := "mail_custom"
 	if err := q.EnqueueMail(t.Context(), sqlc.EnqueueMailParams{ID: id, Kind: "register", Recipient: "test@example.com", Subject: "test", Body: "private", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
 	service, err := mailoutbox.NewService(pool, func(_ context.Context, m mailoutbox.Message) error {
 		calls++
-		if m.ID != id.String() {
+		if m.ID != id {
 			t.Fatal("重试未复用邮件 ID")
 		}
 		if calls == 1 {
@@ -62,11 +62,11 @@ func TestRetryAndClearPayload(t *testing.T) {
 func TestLeaseOwnershipAndExpiry(t *testing.T) {
 	pool, _ := testutil.Database(t)
 	q := sqlc.New(pool)
-	id := uuid.New()
+	id := identity.NewID()
 	if err := q.EnqueueMail(t.Context(), sqlc.EnqueueMailParams{ID: id, Kind: "test", Recipient: "test@example.com", Subject: "test", Body: "private", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	first, second := uuid.New(), uuid.New()
+	first, second := identity.NewID(), identity.NewID()
 	if _, err := q.ClaimMail(t.Context(), sqlc.ClaimMailParams{LeaseID: &first, MaxAttempts: 5, LeaseSeconds: 60}); err != nil {
 		t.Fatal(err)
 	}
@@ -109,14 +109,14 @@ func TestAttemptLimitClearsPayload(t *testing.T) {
 		{"最后一次发送后租约过期", 5, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			id := uuid.New()
+			id := identity.NewID()
 			if err := q.EnqueueMail(t.Context(), sqlc.EnqueueMailParams{
 				ID: id, Kind: "test", Recipient: "test@example.com", Subject: "private subject",
 				Body: "private body", ExpiresAt: time.Now().Add(time.Hour),
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := pool.Exec(t.Context(), "UPDATE mail_outbox SET attempts=$2, status='processing', lease_id=$3, leased_until=now()-interval '1 second' WHERE id=$1", id, tc.attempts, uuid.New()); err != nil {
+			if _, err := pool.Exec(t.Context(), "UPDATE mail_outbox SET attempts=$2, status='processing', lease_id=$3, leased_until=now()-interval '1 second' WHERE id=$1", id, tc.attempts, identity.NewID()); err != nil {
 				t.Fatal(err)
 			}
 			sent := false

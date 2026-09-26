@@ -8,9 +8,9 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -37,7 +37,7 @@ func Requests(logger *slog.Logger, timeout time.Duration) func(http.Handler) htt
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			requestID := uuid.New().String()
+			requestID := identity.NewID()
 			w.Header().Set("X-Request-ID", requestID)
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			log := logger.With("request_id", requestID)

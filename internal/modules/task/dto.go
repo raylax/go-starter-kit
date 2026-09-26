@@ -3,14 +3,12 @@ package task
 import (
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/example/go-starter-kit/internal/httpapi"
 )
 
 // Task 是独立于数据库类型的接口表示。
 type Task struct {
-	ID          uuid.UUID `json:"id" format:"uuid"`
+	ID          string    `json:"id" minLength:"1" maxLength:"255"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Status      Status    `json:"status" enum:"todo,in_progress,done"`
@@ -26,7 +24,7 @@ type TaskCreateRequest struct {
 
 type TaskCreateInput struct{ Body TaskCreateRequest }
 type TaskIDInput struct {
-	ID uuid.UUID `path:"id" format:"uuid"`
+	ID string `path:"id" minLength:"1" maxLength:"255"`
 }
 type TaskUpdateRequest struct {
 	Title       string `json:"title" minLength:"1" maxLength:"200"`
@@ -35,7 +33,7 @@ type TaskUpdateRequest struct {
 }
 
 type TaskUpdateInput struct {
-	ID   uuid.UUID `path:"id" format:"uuid"`
+	ID   string `path:"id" minLength:"1" maxLength:"255"`
 	Body TaskUpdateRequest
 }
 type TaskListInput struct {

@@ -12,6 +12,8 @@
             "type": "boolean"
           },
           "id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "last_used_at": {
@@ -38,6 +40,8 @@
         "additionalProperties": false,
         "properties": {
           "flow_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -55,6 +59,8 @@
             "type": "string"
           },
           "reauthentication_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -68,6 +74,8 @@
         "additionalProperties": false,
         "properties": {
           "reauthentication_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -87,6 +95,8 @@
             "type": "string"
           },
           "flow_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "token": {
@@ -105,6 +115,8 @@
         "additionalProperties": false,
         "properties": {
           "flow_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "name": {
@@ -174,6 +186,8 @@
         "additionalProperties": false,
         "properties": {
           "reauthentication_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "result": {
@@ -322,7 +336,8 @@
             "type": "string"
           },
           "id": {
-            "format": "uuid",
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "name": {
@@ -432,6 +447,8 @@
             "type": "string"
           },
           "id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "idle_expires_at": {
@@ -473,6 +490,8 @@
             "type": "string"
           },
           "session_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "token": {
@@ -537,7 +556,8 @@
             "type": "string"
           },
           "id": {
-            "format": "uuid",
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "status": {
@@ -675,6 +695,8 @@
             "type": "boolean"
           },
           "id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "role": {
@@ -713,6 +735,8 @@
             "type": "string"
           },
           "reauthentication_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -799,6 +823,8 @@
         "additionalProperties": false,
         "properties": {
           "account_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "method": {
@@ -817,7 +843,7 @@
             "type": "string"
           },
           "target": {
-            "maxLength": 254,
+            "maxLength": 255,
             "minLength": 1,
             "type": "string"
           }
@@ -868,7 +894,7 @@
             "type": "string"
           },
           "target": {
-            "maxLength": 254,
+            "maxLength": 255,
             "minLength": 1,
             "type": "string"
           }
@@ -921,6 +947,8 @@
             "type": "string"
           },
           "reauthentication_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -942,6 +970,8 @@
             ]
           },
           "session_id": {
+            "maxLength": 255,
+            "minLength": 1,
             "type": "string"
           },
           "user": {
@@ -1282,6 +1312,8 @@
             "name": "id",
             "required": true,
             "schema": {
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -1421,6 +1453,8 @@
             "name": "id",
             "required": true,
             "schema": {
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -3026,6 +3060,8 @@
             "name": "id",
             "required": true,
             "schema": {
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -3909,6 +3945,8 @@
             "name": "id",
             "required": true,
             "schema": {
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -4321,7 +4359,8 @@
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -4439,7 +4478,8 @@
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -4564,7 +4604,8 @@
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -4967,7 +5008,8 @@
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -5075,7 +5117,8 @@
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }
@@ -5190,7 +5233,8 @@
             "name": "id",
             "required": true,
             "schema": {
-              "format": "uuid",
+              "maxLength": 255,
+              "minLength": 1,
               "type": "string"
             }
           }

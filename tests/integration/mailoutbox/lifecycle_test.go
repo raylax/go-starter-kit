@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/example/go-starter-kit/internal/db/sqlc"
+	"github.com/example/go-starter-kit/internal/identity"
 	"github.com/example/go-starter-kit/internal/modules/mailoutbox"
 	"github.com/example/go-starter-kit/tests/integration/testutil"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -40,7 +40,7 @@ func TestProcessOneExcludesConcurrentConsumer(t *testing.T) {
 		}
 	}, nil)
 	done := processAsync(ctx, first)
-	if message := await(t, entered); message.ID != id.String() {
+	if message := await(t, entered); message.ID != id {
 		t.Fatal("消费者未收到目标邮件")
 	}
 	second := newConsumer(t, pool, func(context.Context, mailoutbox.Message) error {
@@ -80,7 +80,7 @@ func TestProcessOnePersistsRetryAfterCancellation(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil {
 		t.Fatal(err)
 	}
-	if record["stage"] != "send" || record["message_id"] != id.String() || record["attempt"] != float64(1) || record["reason_code"] != "canceled" {
+	if record["stage"] != "send" || record["message_id"] != id || record["attempt"] != float64(1) || record["reason_code"] != "canceled" {
 		t.Fatalf("发送取消日志缺少安全诊断属性: %s", logs.String())
 	}
 }
@@ -122,7 +122,7 @@ func TestRunLogsWriteTimeoutAfterParentDeadline(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		}
-		if record["stage"] == "retry" && record["level"] == "ERROR" && record["reason_code"] == "deadline_exceeded" && record["message_id"] == id.String() && record["attempt"] == float64(1) {
+		if record["stage"] == "retry" && record["level"] == "ERROR" && record["reason_code"] == "deadline_exceeded" && record["message_id"] == id && record["attempt"] == float64(1) {
 			found = true
 		}
 	}
@@ -139,7 +139,7 @@ func TestProcessOneRecoversAfterCompletionWriteFailure(t *testing.T) {
 	calls := 0
 	service := newConsumer(t, database, func(_ context.Context, message mailoutbox.Message) error {
 		calls++
-		if message.ID != id.String() {
+		if message.ID != id {
 			t.Error("恢复投递改变了供应商幂等键")
 		}
 		if calls == 1 {
@@ -193,7 +193,7 @@ func TestProcessOneRejectsStaleConsumerCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := newConsumer(t, pool, func(_ context.Context, message mailoutbox.Message) error {
-		if message.ID != id.String() {
+		if message.ID != id {
 			t.Error("租约恢复改变了供应商幂等键")
 		}
 		return nil
@@ -228,9 +228,9 @@ func TestProcessOneRespectsMessageDeadline(t *testing.T) {
 	assertMessageState(t, pool, id, mailoutbox.StatusFailed, 1, true)
 }
 
-func enqueueMessage(t *testing.T, pool *pgxpool.Pool, expiresAt time.Time) uuid.UUID {
+func enqueueMessage(t *testing.T, pool *pgxpool.Pool, expiresAt time.Time) string {
 	t.Helper()
-	id := uuid.New()
+	id := identity.NewID()
 	if err := sqlc.New(pool).EnqueueMail(t.Context(), sqlc.EnqueueMailParams{
 		ID: id, Kind: "test", Recipient: "test@example.com", Subject: "private subject", Body: "private body", ExpiresAt: expiresAt,
 	}); err != nil {
@@ -251,7 +251,7 @@ func newConsumer(t *testing.T, database sqlc.DBTX, send mailoutbox.SendFunc, log
 	return service
 }
 
-func assertMessageState(t *testing.T, pool *pgxpool.Pool, id uuid.UUID, wantStatus mailoutbox.Status, wantAttempts int, cleared bool) {
+func assertMessageState(t *testing.T, pool *pgxpool.Pool, id string, wantStatus mailoutbox.Status, wantAttempts int, cleared bool) {
 	t.Helper()
 	var status, recipient, subject, body string
 	var attempts int
@@ -330,7 +330,7 @@ func TestSendFailureLogsDoNotExposeProviderResponse(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil {
 		t.Fatal(err)
 	}
-	if record["stage"] != "send" || record["message_id"] != id.String() || record["reason_code"] == "" || record["reason_code"] == nil {
+	if record["stage"] != "send" || record["message_id"] != id || record["reason_code"] == "" || record["reason_code"] == nil {
 		t.Fatal("供应商失败日志缺少安全诊断属性")
 	}
 }

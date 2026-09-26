@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 const appendAudit = `-- name: AppendAudit :exec
@@ -17,7 +15,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 `
 
 type AppendAuditParams struct {
-	ID           uuid.UUID
+	ID           string
 	Action       string
 	Outcome      string
 	ActorType    string
@@ -25,7 +23,7 @@ type AppendAuditParams struct {
 	ResourceType string
 	ResourceID   *string
 	ScopeSubject *string
-	SessionID    *uuid.UUID
+	SessionID    *string
 	RequestID    *string
 	ReasonCode   *string
 	Metadata     []byte

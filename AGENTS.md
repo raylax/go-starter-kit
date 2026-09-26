@@ -10,8 +10,8 @@
 - 公共业务错误定义在 `internal/apperror/`，业务模块保留具体错误提示；`httpapi.Endpoint` 在运行时统一调用 `FromError`，模块处理函数直接返回业务错误，禁止重复实现状态映射。普通业务接口使用 `CreatedEndpoint`、`ItemEndpoint`、`PageEndpoint[具名分页 DTO]` 统一响应包装；特殊响应可使用 `MapEndpoint`；无正文接口使用 `NoContentEndpoint`，自定义完整处理函数仍可使用 `Endpoint`。底层原因通过错误链保留，HTTP 只公开业务提示。
 - 数据库错误使用 `db.MapError`，模块声明 `ErrorPolicy`；唯一约束必须按名称匹配，未知约束保持内部异常。
 - 分页规则复用 `pagination.Params`、`Build` 和 `Map`；HTTP 分页字段复用 `httpapi.PageQuery`、`Page` 和 `PageFrom`。模块列表响应使用具名类型提供稳定的 OpenAPI schema 名称。
-- 文本基础校验使用 `internal/validation/`，具体字段上限和状态规则由业务模块决定；认证参数复用 `identity` 校验，所有环境使用一致的认证规则。保留各服务入口的所有者检查；字段长度、枚举和字段组合规则由 DTO 与业务代码校验，不使用数据库 CHECK。数据库保留主键、外键、唯一约束及 NOT NULL。账户写入通过模块内 store 执行校验，禁止绕过该入口直接调用生成写入方法。
-- UUID 由 Go 代码生成并显式写入，默认使用 v4（`uuid.New()`），数据库 UUID 列不设置生成默认值，不依赖数据库的 UUID 生成功能。生成策略由对应资源的创建代码维护，后续可按表独立切换 v7；不改写已有记录 ID。
+- 文本基础校验使用 `internal/validation/`，具体字段上限和状态规则由业务模块决定；认证参数复用 `identity` 校验，所有环境使用一致的认证规则。保留各服务入口的所有者检查；字段长度、枚举和字段组合规则由 DTO 与业务代码校验，不使用数据库 CHECK。数据库保留主键、外键、唯一约束及 NOT NULL。账户读取直接调用模块内 `store.queries` 的 sqlc 读取方法，不添加纯读取转发层；写入通过 store 执行校验，禁止绕过该入口直接调用生成写入方法。架构测试限制底层查询对象只能用于允许的读取方法，禁止取出或传递该对象；事务内读写共用同一个 store。
+- 资源 ID 在 Go 中使用 `string`，可空引用使用 `*string`，数据库列使用 `TEXT`。统一通过 `identity.NewID()` 生成并显式写入，当前默认 UUID v4 字符串；调用方不依赖 UUID 格式，后续替换生成策略只修改公共方法，不改写已有记录 ID。输入标识复用 `validation.Identifier`：非空白、有效 UTF-8、无 NUL、最多 255 字节，不裁剪、不改变大小写；DTO 同步维护静态长度标签，数据库不设置生成默认值。
 - OpenAPI schema 使用 PascalCase：资源模型为 `<资源>`，请求正文为 `<资源><动作>Request`，列表响应为 `<资源>ListResponse`；公共响应为 `HealthResponse`、`ErrorResponse`，错误明细为 `ErrorDetail`。公开正文使用具名 DTO，不使用匿名正文生成的 `InputBody`、`OutputBody` 或无资源前缀的 `WriteBody`；修改源码后重新生成契约，禁止手改 JSON。
 - API DTO 与业务模型、生成的数据库类型分别维护。所有业务资源的读写 SQL 必须按已认证的 subject 限定作用域。
 - 迁移集中放在 `internal/db/migrations/`，全局有序。修改表结构时新增迁移，不修改已应用到部署数据库的历史迁移。
@@ -38,7 +38,7 @@
 
 - 环境配置使用 caarlos0/env，经 `platform/configenv` 统一处理显式空值与错误脱敏；业务规则由 Config.Validate 维护，Run(ctx, cfg) 不读取环境。命令按需加载配置，帮助和离线 OpenAPI 不初始化运行依赖。
 
-- 业务服务入口使用 `identity.RequireSubject` 校验资源归属主体并统一返回未认证错误；主体格式统一为非空白、有效 UTF-8、无 NUL、最多 255 字节。`identity` 可依赖公共 `apperror`，不依赖 HTTP 或数据库；会话有效性仍由认证层验证。
+- 业务服务入口使用 `identity.RequireSubject` 校验资源归属主体并统一返回未认证错误；主体格式统一为非空白、有效 UTF-8、无 NUL、最多 255 字节。`identity` 可依赖公共 `apperror` 与 `validation`，不依赖 HTTP 或数据库；会话有效性仍由认证层验证。
 
 - 固定业务取值使用按领域区分的字符串枚举及 `Valid()`，业务方法与模型使用枚举类型，SQL 边界显式转换；状态转换使用独立规则。提供商 ID、审计 action/resource/reason、邮件 kind 等扩展标识保留字符串。无需 stringer，不引入数据库 CHECK；SQL 中的固定状态及 DTO enum 标签与领域枚举同步维护。
 

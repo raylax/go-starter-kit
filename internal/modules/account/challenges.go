@@ -8,7 +8,6 @@ import (
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
 	"github.com/example/go-starter-kit/internal/identity"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -18,7 +17,7 @@ const (
 	emailChangeChallengeTTL   = 5 * time.Minute
 )
 
-func (s *Service) createChallenge(ctx context.Context, q *store, user sqlc.User, purpose VerificationPurpose, email string, ttl time.Duration, session, reauth *uuid.UUID) (sqlc.AuthVerification, error) {
+func (s *Service) createChallenge(ctx context.Context, q *store, user sqlc.User, purpose VerificationPurpose, email string, ttl time.Duration, session, reauth *string) (sqlc.AuthVerification, error) {
 	token, hash := identity.NewToken(ChallengePrefix)
 	verification, err := q.CreateVerification(ctx, sqlc.CreateVerificationParams{
 		UserID:             user.ID,
@@ -49,7 +48,7 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 	if err != nil {
 		return ErrCredentials
 	}
-	verification, err := s.queries.FindVerification(ctx, hash)
+	verification, err := s.store.queries.FindVerification(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrCredentials
 	}
@@ -78,7 +77,7 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 	}
 	return db.WithTransaction(ctx, s.database, storageErrors, func(tx pgx.Tx) error {
 		q := newStore(tx)
-		user, err := q.LockUser(ctx, verification.UserID)
+		user, err := q.queries.LockUser(ctx, verification.UserID)
 		if err != nil {
 			return err
 		}
@@ -109,13 +108,13 @@ func (s *Service) VerifyChallenge(ctx context.Context, r Request, token string, 
 				return err
 			}
 		}
-		r.UserID = user.ID.String()
+		r.UserID = user.ID
 		return audit(ctx, q, r, auditEvent{
 			Action:       "auth." + string(input.Purpose),
 			Outcome:      AuditSuccess,
 			ResourceType: "user",
-			ResourceID:   user.ID.String(),
-			ScopeSubject: user.ID.String(),
+			ResourceID:   user.ID,
+			ScopeSubject: user.ID,
 		})
 	})
 }

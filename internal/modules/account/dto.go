@@ -7,11 +7,10 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/example/go-starter-kit/internal/httpapi"
-	"github.com/google/uuid"
 )
 
 type User struct {
-	ID            uuid.UUID  `json:"id"`
+	ID            string     `json:"id" minLength:"1" maxLength:"255"`
 	DisplayName   string     `json:"display_name"`
 	Email         *string    `json:"email"`
 	EmailVerified bool       `json:"email_verified"`
@@ -20,7 +19,7 @@ type User struct {
 	CreatedAt     time.Time  `json:"created_at"`
 }
 type Account struct {
-	ID         uuid.UUID  `json:"id"`
+	ID         string     `json:"id" minLength:"1" maxLength:"255"`
 	Provider   string     `json:"provider"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
@@ -29,10 +28,10 @@ type Account struct {
 type UserProfile struct {
 	User      User      `json:"user"`
 	Accounts  []Account `json:"accounts"`
-	SessionID uuid.UUID `json:"session_id"`
+	SessionID string    `json:"session_id" minLength:"1" maxLength:"255"`
 }
 type Session struct {
-	ID                uuid.UUID  `json:"id"`
+	ID                string     `json:"id" minLength:"1" maxLength:"255"`
 	Method            AuthMethod `json:"method" enum:"password,oauth"`
 	AuthenticatedAt   time.Time  `json:"authenticated_at"`
 	CreatedAt         time.Time  `json:"created_at"`
@@ -43,12 +42,12 @@ type Session struct {
 type SessionCreateResponse struct {
 	Token             string    `json:"token"`
 	TokenType         string    `json:"token_type" enum:"Bearer"`
-	SessionID         uuid.UUID `json:"session_id"`
+	SessionID         string    `json:"session_id" minLength:"1" maxLength:"255"`
 	IdleExpiresAt     time.Time `json:"idle_expires_at"`
 	AbsoluteExpiresAt time.Time `json:"absolute_expires_at"`
 }
 type AuthFlowResponse struct {
-	FlowID           uuid.UUID `json:"flow_id"`
+	FlowID           string    `json:"flow_id" minLength:"1" maxLength:"255"`
 	Token            string    `json:"token"`
 	AuthorizationURL string    `json:"authorization_url"`
 	ExpiresAt        time.Time `json:"expires_at"`
@@ -59,11 +58,11 @@ type AuthSessionResult struct {
 }
 type AuthReauthenticatedResult struct {
 	Result             AuthResult `json:"result" enum:"reauthenticated"`
-	ReauthenticationID uuid.UUID  `json:"reauthentication_id"`
+	ReauthenticationID string     `json:"reauthentication_id" minLength:"1" maxLength:"255"`
 }
 type AuthLinkPendingResult struct {
 	Result   AuthResult `json:"result" enum:"link_pending"`
-	FlowID   uuid.UUID  `json:"flow_id"`
+	FlowID   string     `json:"flow_id" minLength:"1" maxLength:"255"`
 	Provider string     `json:"provider"`
 	Name     string     `json:"name"`
 }
@@ -74,14 +73,14 @@ type AuthRedirectResult struct {
 type AuthCallbackResponse struct {
 	Result             AuthResult             `json:"result"`
 	Session            *SessionCreateResponse `json:"session,omitempty"`
-	ReauthenticationID *uuid.UUID             `json:"reauthentication_id,omitempty"`
-	FlowID             *uuid.UUID             `json:"flow_id,omitempty"`
+	ReauthenticationID *string                `json:"reauthentication_id,omitempty" minLength:"1" maxLength:"255"`
+	FlowID             *string                `json:"flow_id,omitempty" minLength:"1" maxLength:"255"`
 	Provider           *string                `json:"provider,omitempty"`
 	Name               *string                `json:"name,omitempty"`
 }
 type UserReauthenticateResponse struct {
 	Result             AuthResult        `json:"result"`
-	ReauthenticationID *uuid.UUID        `json:"reauthentication_id,omitempty"`
+	ReauthenticationID *string           `json:"reauthentication_id,omitempty" minLength:"1" maxLength:"255"`
 	Flow               *AuthFlowResponse `json:"flow,omitempty"`
 }
 
@@ -146,18 +145,18 @@ type UserPasswordReauthenticateRequest struct {
 	Method    AuthMethod `json:"method" enum:"password"`
 	Password  string     `json:"password" minLength:"1" maxLength:"128"`
 	Operation Operation  `json:"operation" enum:"link_account,unlink_account,set_password,change_email"`
-	Target    string     `json:"target" minLength:"1" maxLength:"254"`
+	Target    string     `json:"target" minLength:"1" maxLength:"255"`
 }
 type UserOAuthReauthenticateRequest struct {
 	Method    AuthMethod `json:"method" enum:"oauth"`
-	AccountID uuid.UUID  `json:"account_id"`
+	AccountID string     `json:"account_id" minLength:"1" maxLength:"255"`
 	Operation Operation  `json:"operation" enum:"link_account,unlink_account,set_password,change_email"`
-	Target    string     `json:"target" minLength:"1" maxLength:"254"`
+	Target    string     `json:"target" minLength:"1" maxLength:"255"`
 }
 type UserReauthenticateRequest struct {
 	Method    AuthMethod `json:"method" enum:"password,oauth"`
 	Password  string     `json:"password,omitempty"`
-	AccountID uuid.UUID  `json:"account_id,omitempty"`
+	AccountID string     `json:"account_id,omitempty" minLength:"1" maxLength:"255"`
 	Operation Operation  `json:"operation"`
 	Target    string     `json:"target"`
 }
@@ -167,23 +166,23 @@ func (UserReauthenticateRequest) Schema(r huma.Registry) *huma.Schema {
 }
 
 type AccountLinkRequest struct {
-	Provider           string    `json:"provider" minLength:"1" maxLength:"64"`
-	ReauthenticationID uuid.UUID `json:"reauthentication_id"`
+	Provider           string `json:"provider" minLength:"1" maxLength:"64"`
+	ReauthenticationID string `json:"reauthentication_id" minLength:"1" maxLength:"255"`
 }
 type AccountLinkConfirmRequest struct {
-	FlowID uuid.UUID `json:"flow_id"`
+	FlowID string `json:"flow_id" minLength:"1" maxLength:"255"`
 }
 type AccountUnlinkRequest struct {
-	ReauthenticationID uuid.UUID `json:"reauthentication_id"`
+	ReauthenticationID string `json:"reauthentication_id" minLength:"1" maxLength:"255"`
 }
 type UserPasswordSetRequest struct {
-	NewPassword        string     `json:"new_password" minLength:"15" maxLength:"128"`
-	CurrentPassword    string     `json:"current_password,omitempty" maxLength:"128"`
-	ReauthenticationID *uuid.UUID `json:"reauthentication_id,omitempty"`
+	NewPassword        string  `json:"new_password" minLength:"15" maxLength:"128"`
+	CurrentPassword    string  `json:"current_password,omitempty" maxLength:"128"`
+	ReauthenticationID *string `json:"reauthentication_id,omitempty" minLength:"1" maxLength:"255"`
 }
 type UserEmailChangeRequest struct {
-	Email              string    `json:"email" format:"email" maxLength:"254"`
-	ReauthenticationID uuid.UUID `json:"reauthentication_id"`
+	Email              string `json:"email" format:"email" maxLength:"254"`
+	ReauthenticationID string `json:"reauthentication_id" minLength:"1" maxLength:"255"`
 }
 
 type RegisterInput struct{ Body UserRegisterRequest }
@@ -200,13 +199,13 @@ type ReauthenticateInput struct{ Body UserReauthenticateRequest }
 type LinkInput struct{ Body AccountLinkRequest }
 type ConfirmLinkInput struct{ Body AccountLinkConfirmRequest }
 type UnlinkInput struct {
-	ID   uuid.UUID `path:"id"`
+	ID   string `path:"id" minLength:"1" maxLength:"255"`
 	Body AccountUnlinkRequest
 }
 type PasswordInput struct{ Body UserPasswordSetRequest }
 type EmailInput struct{ Body UserEmailChangeRequest }
 type IDInput struct {
-	ID uuid.UUID `path:"id"`
+	ID string `path:"id" minLength:"1" maxLength:"255"`
 }
 type ListInput struct{ httpapi.PageQuery }
 type SessionListResponse httpapi.Page[Session]
@@ -259,18 +258,18 @@ func callbackOutput(result CallbackResult) (*CallbackOutput, error) {
 	body := AuthCallbackResponse{Result: result.result}
 	switch result.result {
 	case ResultSession:
-		if result.session.ID == uuid.Nil || result.session.Token == "" || result.session.IdleExpiresAt.IsZero() || result.session.AbsoluteExpiresAt.IsZero() {
+		if result.session.ID == "" || result.session.Token == "" || result.session.IdleExpiresAt.IsZero() || result.session.AbsoluteExpiresAt.IsZero() {
 			return nil, errInvalidAuthenticationResult
 		}
 		session := sessionDTO(result.session)
 		body.Session = &session
 	case ResultReauthenticated:
-		if result.reauthenticationID == uuid.Nil {
+		if result.reauthenticationID == "" {
 			return nil, errInvalidAuthenticationResult
 		}
 		body.ReauthenticationID = &result.reauthenticationID
 	case ResultLinkPending:
-		if result.link.FlowID == uuid.Nil || result.link.Provider == "" {
+		if result.link.FlowID == "" || result.link.Provider == "" {
 			return nil, errInvalidAuthenticationResult
 		}
 		body.FlowID = &result.link.FlowID
@@ -286,13 +285,13 @@ func reauthenticateOutput(result ReauthenticationResult) (*ReauthenticateOutput,
 	body := UserReauthenticateResponse{Result: result.result}
 	switch result.result {
 	case ResultRedirect:
-		if result.flow.ID == uuid.Nil || result.flow.Token == "" || result.flow.AuthorizationURL == "" || result.flow.ExpiresAt.IsZero() {
+		if result.flow.ID == "" || result.flow.Token == "" || result.flow.AuthorizationURL == "" || result.flow.ExpiresAt.IsZero() {
 			return nil, errInvalidAuthenticationResult
 		}
 		flow := flowDTO(result.flow)
 		body.Flow = &flow
 	case ResultReauthenticated:
-		if result.reauthenticationID == uuid.Nil {
+		if result.reauthenticationID == "" {
 			return nil, errInvalidAuthenticationResult
 		}
 		body.ReauthenticationID = &result.reauthenticationID

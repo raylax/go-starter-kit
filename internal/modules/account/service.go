@@ -2,9 +2,10 @@ package account
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/example/go-starter-kit/internal/db"
 	"github.com/example/go-starter-kit/internal/db/sqlc"
-	"time"
 )
 
 type Options struct {
@@ -18,7 +19,7 @@ type Database interface {
 }
 type Service struct {
 	database Database
-	queries  *store
+	store    *store
 	options  Options
 	deps     Dependencies
 }
@@ -30,5 +31,5 @@ func NewService(database Database, options Options, deps Dependencies) (*Service
 	if deps.Federation == nil {
 		deps.Federation = disabledFederation{}
 	}
-	return &Service{database: database, queries: newStore(database), options: options, deps: deps}, nil
+	return &Service{database: database, store: newStore(database), options: options, deps: deps}, nil
 }

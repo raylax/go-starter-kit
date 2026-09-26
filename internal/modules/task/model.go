@@ -3,8 +3,6 @@ package task
 import (
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/example/go-starter-kit/internal/apperror"
 )
 
@@ -24,7 +22,7 @@ const (
 func (s Status) Valid() bool { return s == Todo || s == InProgress || s == Done }
 
 type Record struct {
-	ID          uuid.UUID
+	ID          string
 	Title       string
 	Description string
 	Status      Status

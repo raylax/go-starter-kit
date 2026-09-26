@@ -13,10 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/example/go-starter-kit/internal/modules/project"
 	"github.com/example/go-starter-kit/tests/integration/testutil"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestProjectValidation(t *testing.T) {
@@ -31,7 +30,7 @@ func TestProjectValidation(t *testing.T) {
 	for _, query := range []string{"limit=101", "limit=0", "unexpected=1"} {
 		testutil.Request(t, alice, http.MethodGet, "/v1/projects?"+query, "", true, http.StatusUnprocessableEntity)
 	}
-	testutil.Request(t, alice, http.MethodGet, "/v1/projects/not-a-uuid", "", true, http.StatusUnprocessableEntity)
+	testutil.Request(t, alice, http.MethodGet, "/v1/projects/not-a-uuid", "", true, http.StatusNotFound)
 }
 
 func TestProjectCRUD(t *testing.T) {
@@ -42,13 +41,11 @@ func TestProjectCRUD(t *testing.T) {
 	if item.Name != "中文项目" || item.CreatedAt.IsZero() {
 		t.Fatalf("创建的项目不符合预期: %+v", item)
 	}
-	if item.ID.Version() != 4 {
-		t.Fatalf("新建资源 ID 应为 UUID v4，实际为 %s", item.ID)
-	}
+
 	if strings.Contains(string(created), "owner_id") {
 		t.Fatal("响应泄漏了数据库归属字段")
 	}
-	path := "/v1/projects/" + item.ID.String()
+	path := "/v1/projects/" + item.ID
 	if got := decodeProject(t, testutil.Request(t, alice, http.MethodGet, path, "", true, http.StatusOK)); got.ID != item.ID || got.Description != "first" {
 		t.Fatalf("读取的项目不符合预期: %+v", got)
 	}
@@ -68,7 +65,7 @@ func TestProjectOwnership(t *testing.T) {
 	fixture := newProjectFixture(t)
 	bob := testutil.ModuleServer(t, "bob", 5*time.Second, project.NewService(fixture.pool), project.Routes())
 	item := createProject(t, fixture.alice, "归属项目")
-	path := "/v1/projects/" + item.ID.String()
+	path := "/v1/projects/" + item.ID
 	testutil.Request(t, bob, http.MethodGet, path, "", true, http.StatusNotFound)
 	testutil.Request(t, bob, http.MethodPut, path, `{"name":"stolen"}`, true, http.StatusNotFound)
 	testutil.Request(t, bob, http.MethodDelete, path, "", true, http.StatusNotFound)
@@ -88,7 +85,7 @@ func TestProjectNameConflicts(t *testing.T) {
 	first := createProject(t, fixture.alice, "  first  ")
 	createProject(t, fixture.alice, "second")
 	testutil.Request(t, fixture.alice, http.MethodPost, "/v1/projects", `{"name":"first"}`, true, http.StatusConflict)
-	testutil.Request(t, fixture.alice, http.MethodPut, "/v1/projects/"+first.ID.String(), `{"name":"second"}`, true, http.StatusConflict)
+	testutil.Request(t, fixture.alice, http.MethodPut, "/v1/projects/"+first.ID, `{"name":"second"}`, true, http.StatusConflict)
 }
 
 func TestProjectPagination(t *testing.T) {
@@ -100,8 +97,8 @@ func TestProjectPagination(t *testing.T) {
 	if len(page1.Items) != 1 || len(page2.Items) != 1 || !page1.HasMore || page2.HasMore || page1.Items[0].ID == page2.Items[0].ID {
 		t.Fatalf("分页顺序或边界错误: %+v %+v", page1, page2)
 	}
-	seen := map[string]bool{page1.Items[0].ID.String(): true, page2.Items[0].ID.String(): true}
-	if !seen[first.ID.String()] || !seen[second.ID.String()] {
+	seen := map[string]bool{page1.Items[0].ID: true, page2.Items[0].ID: true}
+	if !seen[first.ID] || !seen[second.ID] {
 		t.Fatal("分页遗漏了当前场景创建的项目")
 	}
 }
@@ -152,7 +149,7 @@ func TestProjectDatabaseDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	short := testutil.ModuleServer(t, "alice", 100*time.Millisecond, project.NewService(fixture.pool), project.Routes())
-	testutil.Request(t, short, http.MethodPut, "/v1/projects/"+item.ID.String(), `{"name":"blocked"}`, true, http.StatusGatewayTimeout)
+	testutil.Request(t, short, http.MethodPut, "/v1/projects/"+item.ID, `{"name":"blocked"}`, true, http.StatusGatewayTimeout)
 }
 
 type projectFixture struct {
@@ -193,4 +190,18 @@ func listProjects(t *testing.T, server *httptest.Server, query string) project.P
 		t.Fatal(err)
 	}
 	return result
+}
+
+func TestProjectStringIdentifier(t *testing.T) {
+	fixture := newProjectFixture(t)
+	const id = "project_custom"
+	if _, err := fixture.pool.Exec(t.Context(), "INSERT INTO projects(id,owner_id,name) VALUES($1,'alice','自定义标识')", id); err != nil {
+		t.Fatal(err)
+	}
+	item := decodeProject(t, testutil.Request(t, fixture.alice, http.MethodGet, "/v1/projects/"+id, "", true, http.StatusOK))
+	if item.ID != id {
+		t.Fatal("资源标识被格式化或替换")
+	}
+	testutil.Request(t, fixture.alice, http.MethodDelete, "/v1/projects/"+id, "", true, http.StatusNoContent)
+	testutil.Request(t, fixture.alice, http.MethodGet, "/v1/projects/"+id, "", true, http.StatusNotFound)
 }

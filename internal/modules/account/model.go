@@ -6,7 +6,6 @@ import (
 
 	"github.com/example/go-starter-kit/internal/apperror"
 	"github.com/example/go-starter-kit/internal/authorization"
-	"github.com/google/uuid"
 )
 
 var (
@@ -34,7 +33,7 @@ type Request struct {
 	RequestID, ClientIP string
 }
 type UserRecord struct {
-	ID            uuid.UUID
+	ID            string
 	DisplayName   string
 	Email         *string
 	EmailVerified bool
@@ -43,7 +42,7 @@ type UserRecord struct {
 	CreatedAt     time.Time
 }
 type AccountRecord struct {
-	ID         uuid.UUID
+	ID         string
 	Provider   string
 	CreatedAt  time.Time
 	LastUsedAt *time.Time
@@ -52,10 +51,10 @@ type AccountRecord struct {
 type Profile struct {
 	User      UserRecord
 	Accounts  []AccountRecord
-	SessionID uuid.UUID
+	SessionID string
 }
 type SessionRecord struct {
-	ID                uuid.UUID
+	ID                string
 	Method            AuthMethod
 	AuthenticatedAt   time.Time
 	CreatedAt         time.Time
@@ -65,12 +64,12 @@ type SessionRecord struct {
 }
 type SessionCredentials struct {
 	Token             string
-	ID                uuid.UUID
+	ID                string
 	IdleExpiresAt     time.Time
 	AbsoluteExpiresAt time.Time
 }
 type FlowResult struct {
-	ID               uuid.UUID
+	ID               string
 	Token            string
 	AuthorizationURL string
 	ExpiresAt        time.Time
@@ -81,13 +80,13 @@ type FlowResult struct {
 type CallbackResult struct {
 	result             AuthResult
 	session            SessionCredentials
-	reauthenticationID uuid.UUID
+	reauthenticationID string
 	link               LinkConfirmation
 }
 
 // LinkConfirmation 表示待用户确认的已验证第三方账号。
 type LinkConfirmation struct {
-	FlowID         uuid.UUID
+	FlowID         string
 	Provider, Name string
 }
 
@@ -95,7 +94,7 @@ type LinkConfirmation struct {
 type ReauthenticationResult struct {
 	result             AuthResult
 	flow               FlowResult
-	reauthenticationID uuid.UUID
+	reauthenticationID string
 }
 
 type VerifiedIdentity struct {
@@ -105,7 +104,7 @@ type Reauthentication struct {
 	Method           AuthMethod
 	Operation        Operation
 	Password, Target string
-	AccountID        uuid.UUID
+	AccountID        string
 }
 type Verification struct {
 	Purpose     VerificationPurpose

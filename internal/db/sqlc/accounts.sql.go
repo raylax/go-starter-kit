@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 const changePassword = `-- name: ChangePassword :execrows
@@ -17,8 +15,8 @@ WHERE id = $1 AND user_id = $2 AND provider_id = 'credential' AND revoked_at IS 
 `
 
 type ChangePasswordParams struct {
-	ID           uuid.UUID
-	UserID       uuid.UUID
+	ID           string
+	UserID       string
 	PasswordHash *string
 }
 
@@ -36,8 +34,8 @@ VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, user_id, provider_id, provider_acc
 `
 
 type CreateAccountParams struct {
-	ID                uuid.UUID
-	UserID            uuid.UUID
+	ID                string
+	UserID            string
 	ProviderID        string
 	ProviderAccountID string
 	ProviderNamespace string
@@ -103,8 +101,8 @@ SELECT id, user_id, provider_id, provider_account_id, provider_namespace, passwo
 `
 
 type GetAccountParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
+	ID     string
+	UserID string
 }
 
 func (q *Queries) GetAccount(ctx context.Context, arg GetAccountParams) (Account, error) {
@@ -130,7 +128,7 @@ const getPasswordAccount = `-- name: GetPasswordAccount :one
 SELECT id, user_id, provider_id, provider_account_id, provider_namespace, password_hash, version, created_at, updated_at, last_used_at, revoked_at FROM accounts WHERE user_id = $1 AND provider_id = 'credential' AND revoked_at IS NULL
 `
 
-func (q *Queries) GetPasswordAccount(ctx context.Context, userID uuid.UUID) (Account, error) {
+func (q *Queries) GetPasswordAccount(ctx context.Context, userID string) (Account, error) {
 	row := q.db.QueryRow(ctx, getPasswordAccount, userID)
 	var i Account
 	err := row.Scan(
@@ -153,7 +151,7 @@ const listAccounts = `-- name: ListAccounts :many
 SELECT id, user_id, provider_id, provider_account_id, provider_namespace, password_hash, version, created_at, updated_at, last_used_at, revoked_at FROM accounts WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at, id
 `
 
-func (q *Queries) ListAccounts(ctx context.Context, userID uuid.UUID) ([]Account, error) {
+func (q *Queries) ListAccounts(ctx context.Context, userID string) ([]Account, error) {
 	rows, err := q.db.Query(ctx, listAccounts, userID)
 	if err != nil {
 		return nil, err
@@ -191,8 +189,8 @@ WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
 `
 
 type RevokeAccountParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
+	ID     string
+	UserID string
 }
 
 func (q *Queries) RevokeAccount(ctx context.Context, arg RevokeAccountParams) (int64, error) {
@@ -208,8 +206,8 @@ UPDATE accounts SET last_used_at = now() WHERE id = $1 AND user_id = $2
 `
 
 type TouchAccountParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
+	ID     string
+	UserID string
 }
 
 func (q *Queries) TouchAccount(ctx context.Context, arg TouchAccountParams) error {
@@ -223,8 +221,8 @@ WHERE id = $1 AND user_id = $2 AND password_hash = $4 AND revoked_at IS NULL
 `
 
 type UpgradePasswordHashParams struct {
-	ID              uuid.UUID
-	UserID          uuid.UUID
+	ID              string
+	UserID          string
 	NewPasswordHash *string
 	OldPasswordHash *string
 }
